@@ -40,6 +40,10 @@ function checkRole(roles) {
 
 // 1. AUTENTICACIÓN
 router.post('/auth/login', authController.login);
+router.post('/auth/google', authController.googleLogin);
+router.get('/auth/google-client-id', (req, res) => {
+  res.json({ clientId: process.env.GOOGLE_CLIENT_ID || null });
+});
 
 // 2. DASHBOARD
 router.get('/dashboard', checkRole(['admin', 'productor', 'administrativo']), dashboardController.getDashboard);

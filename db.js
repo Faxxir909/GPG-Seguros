@@ -1,57 +1,97 @@
-const sqlite3 = require('sqlite3').verbose();
+const initSqlJs = require('sql.js');
 const path = require('path');
 const fs = require('fs');
 const bcrypt = require('bcryptjs');
 
 const dbPath = path.join(__dirname, 'gpg_seguros.db');
-const isNewDb = !fs.existsSync(dbPath);
 
-const db = new sqlite3.Database(dbPath, (err) => {
-  if (err) {
-    console.error('Error al abrir la base de datos', err.message);
-  } else {
-    console.log('Conectado a la base de datos SQLite: gpg_seguros.db');
-  }
-});
+let db; // Will be initialized asynchronously
 
-// Helper para ejecutar consultas y devolver una promesa (para INSERT, UPDATE, DELETE, CREATE)
+// Save the database to disk periodically and on changes
+let saveTimer = null;
+function scheduleSave() {
+  if (saveTimer) return;
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    if (db) {
+      const data = db.export();
+      fs.writeFileSync(dbPath, Buffer.from(data));
+    }
+  }, 100);
+}
+
+// Helper para ejecutar consultas (INSERT, UPDATE, DELETE, CREATE, PRAGMA)
 function run(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function (err) {
-      if (err) reject(err);
-      else resolve({ id: this.lastID, changes: this.changes });
-    });
-  });
+  try {
+    db.run(sql, params);
+    const result = {
+      id: db.exec("SELECT last_insert_rowid()")[0]?.values[0][0] || 0,
+      changes: db.getRowsModified()
+    };
+    scheduleSave();
+    return Promise.resolve(result);
+  } catch (err) {
+    return Promise.reject(err);
+  }
 }
 
 // Helper para obtener una fila
 function get(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => {
-      if (err) reject(err);
-      else resolve(row);
-    });
-  });
+  try {
+    const stmt = db.prepare(sql);
+    stmt.bind(params);
+    let row = undefined;
+    if (stmt.step()) {
+      const columns = stmt.getColumnNames();
+      const values = stmt.get();
+      row = {};
+      columns.forEach((col, i) => { row[col] = values[i]; });
+    }
+    stmt.free();
+    return Promise.resolve(row);
+  } catch (err) {
+    return Promise.reject(err);
+  }
 }
 
 // Helper para obtener varias filas
 function all(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => {
-      if (err) reject(err);
-      else resolve(rows);
-    });
-  });
+  try {
+    const stmt = db.prepare(sql);
+    stmt.bind(params);
+    const rows = [];
+    while (stmt.step()) {
+      const columns = stmt.getColumnNames();
+      const values = stmt.get();
+      const row = {};
+      columns.forEach((col, i) => { row[col] = values[i]; });
+      rows.push(row);
+    }
+    stmt.free();
+    return Promise.resolve(rows);
+  } catch (err) {
+    return Promise.reject(err);
+  }
 }
 
 // Inicialización de tablas y carga de datos semilla
 async function initDatabase() {
   try {
+    // Inicializar sql.js y cargar/crear la base de datos
+    const SQL = await initSqlJs();
+    if (fs.existsSync(dbPath)) {
+      const fileBuffer = fs.readFileSync(dbPath);
+      db = new SQL.Database(fileBuffer);
+      console.log('Conectado a la base de datos SQLite existente: gpg_seguros.db');
+    } else {
+      db = new SQL.Database();
+      console.log('Base de datos SQLite creada: gpg_seguros.db');
+    }
+
     // Habilitar claves foráneas
     await run('PRAGMA foreign_keys = ON');
 
-    // Optimizar SQLite con WAL mode y synchronous normal
-    await run('PRAGMA journal_mode = WAL');
+    // sql.js no soporta WAL, usar DELETE journal mode (por defecto)
     await run('PRAGMA synchronous = NORMAL');
 
     // 1. Usuarios
@@ -416,13 +456,6 @@ async function seedCatalogo() {
 async function seedDatabaseAll() {
   console.log('Cargando todos los datos semilla principales...');
 
-  // Si ya existen clientes (seed anterior), no hacer nada
-  const existing = await get('SELECT COUNT(*) as count FROM clientes');
-  if (existing && existing.count > 0) {
-    console.log('Los datos de clientes ya existen. Omitiendo.');
-    return;
-  }
-
   await run('BEGIN TRANSACTION');
   try {
     // Usuarios por defecto (passwords hasheados para seguridad)
@@ -437,118 +470,11 @@ async function seedDatabaseAll() {
       ('administrativo', ?, 'administrativo', 'Ana Admin (Administrativa)')
     `, [hashAdmin, hashProd, hashAdm]);
 
-    // Clientes
-    await run(`INSERT INTO clientes (nombre, dni_cuit, fecha_nacimiento, telefono, email, direccion, localidad, provincia, observaciones, estado, riesgo_baja) VALUES
-      ('Juan Pérez', '20-30456789-2', '1985-05-12', '1155551234', 'juan.perez@email.com', 'Av. Santa Fe 1234', 'Palermo', 'CABA', 'Cliente de confianza. Prefiere contacto por WhatsApp.', 'activo', 0),
-      ('María Rodríguez', '27-32987654-1', '1990-09-24', '3416789123', 'maria.rod@email.com', 'Bv. Oroño 456', 'Rosario', 'Santa Fe', 'Tiene 2 autos y 1 casa cotizada. Muy puntual con los pagos.', 'activo', 0),
-      ('Carlos Gómez', '20-25874123-5', '1978-02-03', '3519876543', 'carlos.gomez@email.com', 'Colón 789', 'Córdoba Capital', 'Córdoba', 'Cliente con retrasos recurrentes en pagos.', 'activo', 1),
-      ('Sofía Martínez', '27-36541236-8', '1995-11-30', '1166667777', 'sofia.martinez@email.com', 'Corrientes 555', 'Recoleta', 'CABA', 'Cliente dado de baja el año pasado por venta de vehículo.', 'inactivo', 0),
-      ('Estudio Contable Lopez', '30-71458962-9', '2010-01-01', '3414221133', 'contacto@lopezyasoc.com', 'Pellegrini 1020', 'Rosario', 'Santa Fe', 'Póliza corporativa (Flota).', 'activo', 0)
-    `);
-
-    // Vehículos
-    await run(`INSERT INTO vehiculos (cliente_id, marca, modelo, version, anio, patente, chasis, motor, uso) VALUES
-      (1, 'Toyota', 'Corolla', '1.8 XEI CVT', 2021, 'AE543AA', '9BH8Y11XXXXXXXXXX', '1ZZ-FE-XXXXXX', 'particular'),
-      (2, 'Peugeot', '208', '1.6 Feline', 2023, 'AF987BB', '8AD9B22XXXXXXXXXX', 'EC5-XXXXXX', 'particular'),
-      (2, 'Ford', 'Ranger', '3.0 V6 Limited 4x4', 2019, 'AD456CC', '8AF1F33XXXXXXXXXX', 'PUMA-XXXXXX', 'particular'),
-      (3, 'Fiat', 'Cronos', '1.3 Drive', 2022, 'AF321DD', '9BD3A44XXXXXXXXXX', 'FSE-XXXXXX', 'comercial'),
-      (5, 'Chevrolet', 'Onix', '1.4T Premier', 2020, 'AE012EE', '9BG4S55XXXXXXXXXX', 'SPE-XXXXXX', 'comercial')
-    `);
-
-    // Pólizas (Vigentes, vencidas, suspendidas)
-    const hoy = new Date();
-    const format = (d) => d.toISOString().split('T')[0];
-
-    const sumarDias = (d, dias) => {
-      const res = new Date(d);
-      res.setDate(res.getDate() + dias);
-      return res;
-    };
-
-    const restarDias = (d, dias) => {
-      const res = new Date(d);
-      res.setDate(res.getDate() - dias);
-      return res;
-    };
-
-    // Póliza 1: Vigente, vence en 15 días (Juan Pérez - Toyota Corolla)
-    const inicio1 = restarDias(hoy, 350);
-    const fin1 = sumarDias(hoy, 15);
-    await run(`INSERT INTO polizas (numero_poliza, numero_renovacion, fecha_inicio, fecha_vencimiento, cobertura, estado, monto_total, valor_cuota, forma_pago, compania, cliente_id, vehiculo_id) VALUES
-      ('POL-TOY-8921', 2, '${format(inicio1)}', '${format(fin1)}', 'Terceros Completo Premium', 'vigente', 120000.00, 10000.00, 'Débito Automático', 'Sancor Seguros', 1, 1)
-    `);
-
-    // Póliza 2: Vigente, vence en 6 meses (María Rodríguez - Peugeot 208)
-    const inicio2 = restarDias(hoy, 30);
-    const fin2 = sumarDias(hoy, 335);
-    await run(`INSERT INTO polizas (numero_poliza, numero_renovacion, fecha_inicio, fecha_vencimiento, cobertura, estado, monto_total, valor_cuota, forma_pago, compania, cliente_id, vehiculo_id) VALUES
-      ('POL-PEU-3120', 0, '${format(inicio2)}', '${format(fin2)}', 'Todo Riesgo con Franquicia', 'vigente', 180000.00, 15000.00, 'Tarjeta de Crédito', 'El Norte Seguros', 2, 2)
-    `);
-
-    // Póliza 3: Vencida hace 5 días (Carlos Gómez - Fiat Cronos)
-    const inicio3 = restarDias(hoy, 370);
-    const fin3 = restarDias(hoy, 5);
-    await run(`INSERT INTO polizas (numero_poliza, numero_renovacion, fecha_inicio, fecha_vencimiento, cobertura, estado, monto_total, valor_cuota, forma_pago, compania, cliente_id, vehiculo_id) VALUES
-      ('POL-FIA-4412', 2, '${format(inicio3)}', '${format(fin3)}', 'Responsabilidad Civil', 'vencida', 84000.00, 7000.00, 'Cupón / Pago Fácil', 'Federación Patronal', 3, 4)
-    `);
-
-    // Póliza 4: Suspendida por falta de pago (Carlos Gómez)
-    const inicio4 = restarDias(hoy, 60);
-    const fin4 = sumarDias(hoy, 305);
-    await run(`INSERT INTO polizas (numero_poliza, numero_renovacion, fecha_inicio, fecha_vencimiento, cobertura, estado, monto_total, valor_cuota, forma_pago, compania, cliente_id, vehiculo_id) VALUES
-      ('POL-FIA-9912', 0, '${format(inicio4)}', '${format(fin4)}', 'Terceros Completo', 'suspendida', 96000.00, 8000.00, 'Cupón / Pago Fácil', 'El Norte Seguros', 3, 4)
-    `);
-
-    // Cotizaciones
-    await run(`INSERT INTO cotizaciones (cliente_id, vehiculo_id, compania, cobertura, monto_total, valor_cuota, estado, notas) VALUES
-      (2, 3, 'Sancor Seguros', 'Todo Riesgo Franquicia $150.000', 210000.00, 17500.00, 'enviada', 'Enviado presupuesto comparativo por WhatsApp.'),
-      (2, 3, 'El Norte Seguros', 'Terceros Completo Full', 150000.00, 12500.00, 'pendiente', 'Comparación del Peugeot Ranger.'),
-      (3, 4, 'La Segunda', 'Terceros Completo Premium', 108000.00, 9000.00, 'rechazada', 'El cliente consideró que la cuota era muy alta.'),
-      (1, 1, 'El Norte Seguros', 'Todo Riesgo Premium', 144000.00, 12000.00, 'aceptada', 'Convertida en póliza POL-TOY-8921. Oferta especial.')
-    `);
-
-    // Siniestros
-    await run(`INSERT INTO siniestros (numero_siniestro, cliente_id, vehiculo_id, poliza_id, fecha, descripcion, estado) VALUES
-      ('SIN-2026-0001', 2, 2, 2, '${format(restarDias(hoy, 15))}', 'Choque menor en intersección de calles. Guardabarro delantero izquierdo dañado.', 'en_proceso'),
-      ('SIN-2026-0002', 3, 4, 4, '${format(restarDias(hoy, 45))}', 'Rotura de parabrisas por granizo.', 'doc_pendiente'),
-      ('SIN-2026-0003', 1, 1, 1, '${format(restarDias(hoy, 120))}', 'Cerradura forzada e intento de robo de stereo. Resuelto por compañía.', 'resuelto')
-    `);
-
-    // CRM Logs (Historial de contactos)
-    await run(`INSERT INTO crm_logs (cliente_id, tipo_contacto, descripcion) VALUES
-      (1, 'whatsapp', 'Se le envió cotización de renovación de póliza.'),
-      (1, 'llamada', 'Habló el cliente confirmando el débito de la cuota 11.'),
-      (2, 'whatsapp', 'Reportó choque menor. Se le solicitaron fotos y denuncia administrativa.'),
-      (3, 'llamada', 'Se lo llamó para avisar de la suspensión de cobertura. Quedó en pagar mañana.'),
-      (3, 'nota', 'Cliente manifiesta problemas de efectivo. Solicita pasar a cobertura básica.')
-    `);
-
-    // Agenda
-    await run(`INSERT INTO agenda (cliente_id, titulo, descripcion, fecha_vencimiento, tipo, completado) VALUES
-      (1, 'Renovación Póliza Corolla', 'Póliza POL-TOY-8921 vence pronto. Contactar para renovar.', '${format(fin1)}', 'renovacion', 0),
-      (3, 'Llamar por deuda cuota 3 y 4', 'Póliza suspendida. Llamar urgente antes de baja definitiva.', '${format(sumarDias(hoy, 2))}', 'llamada', 0),
-      (2, 'Reunión entrega de cheque siniestro', 'Entregar orden de reparación en taller mecánico oficial.', '${format(sumarDias(hoy, 4))}', 'reunion', 0),
-      (null, 'Revisar comisiones pendientes Sancor', 'Controlar planilla de comisiones del mes anterior.', '${format(sumarDias(hoy, 1))}', 'recordatorio', 0)
-    `);
-
-    // Comisiones
-    const perAct = hoy.toISOString().substring(0, 7);
-    const fechaAnt = restarDias(hoy, 30);
-    const perAnt = fechaAnt.toISOString().substring(0, 7);
-
-    await run(`INSERT INTO comisiones (poliza_id, compania, monto_poliza, tasa_comision, monto_comision, estado_pago, periodo) VALUES
-      (1, 'Sancor Seguros', 10000.00, 0.15, 1500.00, 'pagado', '${perAnt}'),
-      (1, 'Sancor Seguros', 10000.00, 0.15, 1500.00, 'pendiente', '${perAct}'),
-      (2, 'El Norte Seguros', 15000.00, 0.18, 2700.00, 'pagado', '${perAnt}'),
-      (2, 'El Norte Seguros', 15000.00, 0.18, 2700.00, 'pendiente', '${perAct}'),
-      (3, 'Federación Patronal', 7000.00, 0.20, 1400.00, 'pagado', '${perAnt}')
-    `);
-
     await run('COMMIT');
-    console.log('Datos semilla insertados con éxito.');
+    console.log('Usuarios base inicializados con éxito.');
   } catch (err) {
     await run('ROLLBACK');
-    console.error('Error al insertar datos semilla:', err);
+    console.error('Error al insertar usuarios base:', err);
     throw err;
   }
 
