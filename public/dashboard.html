@@ -1,0 +1,1306 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard | GPG Seguros CRM</title>
+  <meta name="description" content="CRM de gestión para productores de seguros GPG. Administre clientes, pólizas, vehículos y comisiones.">
+  <!-- Favicon -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%230f172a'/%3E%3Cpath d='M50 15 L80 27 L80 52 Q80 72 50 85 Q20 72 20 52 L20 27 Z' fill='%230ea5e9'/%3E%3Cpath d='M38 50 L47 59 L65 41' stroke='white' stroke-width='5' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E">
+  <!-- Bootstrap 5 CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <!-- FontAwesome Icons -->
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+  <!-- Google Fonts Outfit -->
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <!-- Custom Styles -->
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+
+  <!-- SPLASH SCREEN -->
+  <div id="splash-screen">
+    <div class="splash-content">
+      <div class="splash-icon"><i class="fa-solid fa-shield-halved"></i></div>
+      <div class="splash-title">GPG Seguros</div>
+      <div class="splash-spinner"><span class="spinner-border text-light" role="status"></span></div>
+    </div>
+  </div>
+
+  <!-- TOAST CONTAINER -->
+  <div class="toast-container position-fixed top-0 end-0 p-3" id="toast-container" style="z-index: 9999;"></div>
+
+  <!-- MODAL DE CONFIRMACIÓN GENÉRICO -->
+  <div class="modal fade" id="modalConfirmar" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+      <div class="modal-content border-0 shadow-lg">
+        <div class="modal-header border-0 pb-0">
+          <div class="confirm-icon-wrap" id="confirm-icon-wrap">
+            <i class="fa-solid fa-triangle-exclamation text-danger fs-1" id="confirm-icon"></i>
+          </div>
+        </div>
+        <div class="modal-body text-center pt-2">
+          <h5 class="fw-bold mb-2" id="confirm-title">¿Está seguro?</h5>
+          <p class="text-muted small mb-0" id="confirm-message">Esta acción no se puede deshacer.</p>
+        </div>
+        <div class="modal-footer border-0 justify-content-center gap-2">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="button" class="btn btn-danger" id="confirm-ok-btn">Confirmar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="app-wrapper">
+    <!-- MOBILE HEADER -->
+    <div class="mobile-header d-flex d-lg-none justify-content-between align-items-center px-3 py-2 text-white position-fixed top-0 start-0 w-100" style="z-index: 1010; height: 56px; background: linear-gradient(90deg, #0f172a 0%, #1e293b 100%); border-bottom: 1px solid rgba(255,255,255,0.15);">
+      <div class="mobile-logo d-flex align-items-center gap-2">
+        <i class="fa-solid fa-shield-halved" style="color: #0ea5e9;"></i>
+        <span class="fw-bold" style="font-family: 'Outfit', sans-serif; letter-spacing: -0.5px;">GPG Seguros</span>
+      </div>
+      <button class="btn btn-outline-light btn-sm" id="sidebarToggle" style="border-radius: 8px; border-color: rgba(255,255,255,0.3);">
+        <i class="fa-solid fa-bars"></i>
+      </button>
+    </div>
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <i class="fa-solid fa-shield-halved"></i>
+        <span>GPG Seguros</span>
+      </div>
+
+      <ul class="sidebar-menu">
+        <li>
+          <a href="#" class="sidebar-link active" data-target="dashboard">
+            <i class="fa-solid fa-chart-line"></i>
+            <span>Dashboard</span>
+          </a>
+        </li>
+        <li>
+          <a href="#" class="sidebar-link" data-target="clientes">
+            <i class="fa-solid fa-users"></i>
+            <span>Clientes</span>
+          </a>
+        </li>
+        <li>
+          <a href="#" class="sidebar-link" data-target="polizas">
+            <i class="fa-solid fa-file-contract"></i>
+            <span>Pólizas</span>
+          </a>
+        </li>
+        <li>
+          <a href="#" class="sidebar-link" data-target="cotizaciones">
+            <i class="fa-solid fa-calculator"></i>
+            <span>Cotizaciones</span>
+          </a>
+        </li>
+        <li>
+          <a href="#" class="sidebar-link" data-target="siniestros">
+            <i class="fa-solid fa-car-burst"></i>
+            <span>Siniestros</span>
+          </a>
+        </li>
+        <li>
+          <a href="#" class="sidebar-link" data-target="agenda">
+            <i class="fa-solid fa-calendar-days"></i>
+            <span>Agenda</span>
+          </a>
+        </li>
+        <li id="menu-comisiones" class="d-none">
+          <a href="#" class="sidebar-link" data-target="comisiones">
+            <i class="fa-solid fa-hand-holding-dollar"></i>
+            <span>Comisiones</span>
+          </a>
+        </li>
+        <li>
+          <a href="#" class="sidebar-link" data-target="reportes">
+            <i class="fa-solid fa-file-invoice-dollar"></i>
+            <span>Reportes</span>
+          </a>
+        </li>
+      </ul>
+
+      <!-- USER FOOTER -->
+      <div class="sidebar-user mt-auto">
+        <div class="user-avatar" id="nav-user-avatar">U</div>
+        <div class="user-info">
+          <span class="user-name" id="nav-user-name">Usuario</span>
+          <span class="user-role" id="nav-user-role">Rol</span>
+        </div>
+        <div class="session-timer ms-auto" id="session-timer" title="Tiempo de sesión activa">
+          <i class="fa-regular fa-clock me-1"></i><span id="session-time-display">--:--</span>
+        </div>
+        <button class="btn btn-sm btn-link text-white-50 p-0 ms-2" id="btnLogout" title="Cerrar Sesión">
+          <i class="fa-solid fa-power-off fs-5 text-danger"></i>
+        </button>
+      </div>
+    </aside>
+
+    <!-- MAIN CONTENT -->
+    <main class="main-content">
+      <!-- HEADER -->
+      <header class="top-header">
+        <div class="header-title">
+          <h1 id="panel-title">Dashboard</h1>
+          <p id="panel-subtitle">Resumen en tiempo real de operaciones</p>
+        </div>
+        <div class="header-actions">
+          <span class="badge bg-secondary px-3 py-2 rounded-3" id="current-date-badge">Hoy: --/--/----</span>
+        </div>
+      </header>
+
+      <!-- PANELS (SPA SECTIONS) -->
+
+      <!-- ==========================================
+           1. DASHBOARD PANEL
+           ========================================== -->
+      <section id="panel-dashboard" class="panel-section">
+        <!-- Stats Summary Cards -->
+        <div class="row g-4 mb-4">
+          <div class="col-md-3">
+            <div class="stats-card">
+              <div>
+                <span class="stats-label">Clientes Activos</span>
+                <div class="stats-value" id="stat-clientes-activos">0</div>
+              </div>
+              <div class="stats-icon bg-info-subtle text-info"><i class="fa-solid fa-users"></i></div>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="stats-card">
+              <div>
+                <span class="stats-label">Pólizas Vigentes</span>
+                <div class="stats-value" id="stat-polizas-vigentes">0</div>
+              </div>
+              <div class="stats-icon bg-success-subtle text-success"><i class="fa-solid fa-file-shield"></i></div>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="stats-card">
+              <div>
+                <span class="stats-label">Vencimientos (30d)</span>
+                <div class="stats-value text-danger" id="stat-vencimientos-30">0</div>
+              </div>
+              <div class="stats-icon bg-danger-subtle text-danger"><i class="fa-solid fa-hourglass-half"></i></div>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="stats-card">
+              <div>
+                <span class="stats-label">Siniestros Abiertos</span>
+                <div class="stats-value text-warning" id="stat-siniestros-abiertos">0</div>
+              </div>
+              <div class="stats-icon bg-warning-subtle text-warning"><i class="fa-solid fa-triangle-exclamation"></i></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="row g-4 mb-4">
+          <div class="col-md-6">
+            <div class="stats-card">
+              <div>
+                <span class="stats-label">Producción del Mes</span>
+                <div class="stats-value text-primary" id="stat-produccion-mes">$0.00</div>
+              </div>
+              <div class="stats-icon bg-primary-subtle text-primary"><i class="fa-solid fa-hand-holding-hand"></i></div>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="stats-card">
+              <div>
+                <span class="stats-label">Comisiones del Mes</span>
+                <div class="stats-value text-success" id="stat-comisiones-mes">$0.00</div>
+              </div>
+              <div class="stats-icon bg-success-subtle text-success"><i class="fa-solid fa-coins"></i></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="row g-4">
+          <!-- Charts -->
+          <div class="col-lg-7">
+            <div class="app-card">
+              <div class="app-card-title">Resumen de Comisiones</div>
+              <div style="position: relative; height: 260px;">
+                <canvas id="chartComisiones"></canvas>
+              </div>
+            </div>
+          </div>
+          <!-- Vencimientos -->
+          <div class="col-lg-5">
+            <div class="app-card" style="height: 100%;">
+              <div class="app-card-title">Próximos Vencimientos</div>
+              <div class="table-responsive" style="max-height: 250px;">
+                <table class="table table-hover align-middle" style="font-size: 0.85rem;">
+                  <thead>
+                    <tr>
+                      <th>Cliente</th>
+                      <th>Compañía</th>
+                      <th>Vence</th>
+                      <th>Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody id="dashboard-vencimientos-body">
+                    <tr><td colspan="4" class="text-center text-muted py-3">Cargando vencimientos...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==========================================
+           2. CLIENTES PANEL
+           ========================================== -->
+      <section id="panel-clientes" class="panel-section d-none">
+        <!-- List View -->
+        <div id="clients-list-view">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <div class="input-group w-50">
+              <span class="input-group-text bg-white border-end-0"><i class="fa-solid fa-magnifying-glass text-muted"></i></span>
+              <input type="text" class="form-control border-start-0" id="search-client" placeholder="Buscar cliente por nombre, DNI o CUIT...">
+            </div>
+            <div class="d-flex gap-2">
+              <button class="btn btn-premium-outline" id="btn-import-clients-modal" data-bs-toggle="modal" data-bs-target="#modalImportarClientes">
+                <i class="fa-solid fa-file-excel me-2"></i> Importar Excel
+              </button>
+              <button class="btn btn-premium" id="btn-new-client" data-bs-toggle="modal" data-bs-target="#modalCliente">
+                <i class="fa-solid fa-user-plus me-2"></i> Nuevo Cliente
+              </button>
+            </div>
+          </div>
+
+          <div class="table-responsive">
+            <table class="table table-hover align-middle">
+              <thead>
+                <tr>
+                  <th>Nombre</th>
+                  <th>DNI/CUIT</th>
+                  <th>Teléfono</th>
+                  <th>Email</th>
+                  <th>Localidad</th>
+                  <th>Riesgo Baja</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody id="clients-table-body">
+                <tr><td colspan="7" class="text-center py-4 text-muted">Cargando clientes...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <!-- Paginación Clientes -->
+          <div class="d-flex justify-content-between align-items-center mt-3" id="clients-pagination-wrap">
+            <span class="text-muted small" id="clients-pagination-info"></span>
+            <nav><ul class="pagination pagination-sm mb-0" id="clients-pagination"></ul></nav>
+          </div>
+        </div>
+
+        <!-- Detail Ficha Cliente View -->
+        <div id="client-detail-view" class="d-none">
+          <button class="btn btn-sm btn-outline-secondary mb-3" id="btn-back-to-clients">
+            <i class="fa-solid fa-arrow-left me-1"></i> Volver al listado
+          </button>
+          <div class="client-profile-header d-flex justify-content-between align-items-center">
+            <div>
+              <div class="d-flex align-items-center gap-3">
+                <h2 class="mb-0 fw-bold" id="detail-client-name">Juan Pérez</h2>
+                <span class="badge-riesgo d-none" id="detail-client-risk-badge">Riesgo de Baja</span>
+              </div>
+              <p class="mb-0 text-white-50" id="detail-client-doc">CUIT: 20-30456789-2</p>
+            </div>
+            <div class="d-flex gap-2">
+              <button class="btn btn-sm btn-outline-light" id="btn-print-client" title="Imprimir Ficha"><i class="fa-solid fa-print me-1"></i> Imprimir</button>
+              <button class="btn btn-sm btn-outline-light" id="btn-edit-detail-client"><i class="fa-solid fa-pen me-1"></i> Editar Datos</button>
+              <button class="btn btn-sm btn-danger d-none" id="btn-delete-detail-client"><i class="fa-solid fa-trash me-1"></i> Eliminar Cliente</button>
+            </div>
+          </div>
+
+          <!-- Tabs menu -->
+          <ul class="nav nav-tabs client-tabs" id="clientTabs" role="tablist">
+            <li class="nav-item">
+              <button class="nav-link active" id="info-tab" data-bs-toggle="tab" data-bs-target="#tab-info" type="button">Datos Personales</button>
+            </li>
+            <li class="nav-item">
+              <button class="nav-link" id="vehicles-tab" data-bs-toggle="tab" data-bs-target="#tab-vehicles" type="button">Vehículos</button>
+            </li>
+            <li class="nav-item">
+              <button class="nav-link" id="policies-tab" data-bs-toggle="tab" data-bs-target="#tab-policies" type="button">Pólizas</button>
+            </li>
+            <li class="nav-item">
+              <button class="nav-link" id="siniestros-tab" data-bs-toggle="tab" data-bs-target="#tab-siniestros" type="button">Siniestros</button>
+            </li>
+            <li class="nav-item">
+              <button class="nav-link" id="history-tab" data-bs-toggle="tab" data-bs-target="#tab-history" type="button">Historial CRM</button>
+            </li>
+            <li class="nav-item">
+              <button class="nav-link" id="docs-tab" data-bs-toggle="tab" data-bs-target="#tab-docs" type="button">Documentación</button>
+            </li>
+          </ul>
+
+          <div class="tab-content" id="clientTabsContent">
+            <!-- TAB 1: Datos -->
+            <div class="tab-pane fade show active" id="tab-info">
+              <div class="row g-3">
+                <div class="col-md-4"><strong>Fecha de Nacimiento:</strong> <p id="detail-client-birth">--</p></div>
+                <div class="col-md-4"><strong>Teléfono:</strong> <p id="detail-client-phone">--</p></div>
+                <div class="col-md-4"><strong>Email:</strong> <p id="detail-client-email">--</p></div>
+                <div class="col-md-6"><strong>Dirección:</strong> <p id="detail-client-address">--</p></div>
+                <div class="col-md-3"><strong>Localidad:</strong> <p id="detail-client-city">--</p></div>
+                <div class="col-md-3"><strong>Provincia:</strong> <p id="detail-client-province">--</p></div>
+                <div class="col-12"><strong>Observaciones:</strong> <p id="detail-client-notes">--</p></div>
+              </div>
+            </div>
+            <!-- TAB 2: Vehículos -->
+            <div class="tab-pane fade" id="tab-vehicles">
+              <div class="d-flex justify-content-end mb-3">
+                <button class="btn btn-sm btn-premium" id="btn-add-vehicle"><i class="fa-solid fa-plus me-1"></i> Vincular Vehículo</button>
+              </div>
+              <div class="table-responsive">
+                <table class="table align-middle">
+                  <thead>
+                    <tr>
+                      <th>Marca y Modelo</th>
+                      <th>Año</th>
+                      <th>Patente</th>
+                      <th>Chasis / Motor</th>
+                      <th>Uso</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody id="detail-vehicles-body"></tbody>
+                </table>
+              </div>
+            </div>
+            <!-- TAB 3: Pólizas -->
+            <div class="tab-pane fade" id="tab-policies">
+              <div class="d-flex justify-content-end mb-3">
+                <button class="btn btn-sm btn-premium" id="btn-add-policy"><i class="fa-solid fa-plus me-1"></i> Emitir Póliza</button>
+              </div>
+              <div class="table-responsive">
+                <table class="table align-middle">
+                  <thead>
+                    <tr>
+                      <th>Número de Póliza</th>
+                      <th>Compañía</th>
+                      <th>Cobertura</th>
+                      <th>Vigencia</th>
+                      <th>Valor Cuota</th>
+                      <th>Estado</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody id="detail-policies-body"></tbody>
+                </table>
+              </div>
+            </div>
+            <!-- TAB 4: Siniestros -->
+            <div class="tab-pane fade" id="tab-siniestros">
+              <div class="d-flex justify-content-end mb-3">
+                <button class="btn btn-sm btn-premium" id="btn-add-claim"><i class="fa-solid fa-plus me-1"></i> Reportar Siniestro</button>
+              </div>
+              <div class="table-responsive">
+                <table class="table align-middle">
+                  <thead>
+                    <tr>
+                      <th>Nº Siniestro</th>
+                      <th>Patente / Vehículo</th>
+                      <th>Fecha</th>
+                      <th>Descripción</th>
+                      <th>Estado</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody id="detail-claims-body"></tbody>
+                </table>
+              </div>
+            </div>
+            <!-- TAB 5: Historial CRM -->
+            <div class="tab-pane fade" id="tab-history">
+              <div class="row">
+                <div class="col-md-8">
+                  <div class="timeline" id="detail-timeline-body"></div>
+                </div>
+                <div class="col-md-4 border-start">
+                  <h5>Registrar Contacto</h5>
+                  <form id="formCRMContact">
+                    <div class="mb-3">
+                      <label for="crm-contact-type" class="form-label">Tipo de Contacto</label>
+                      <select class="form-select" id="crm-contact-type" required>
+                        <option value="whatsapp">WhatsApp</option>
+                        <option value="llamada">Llamada Telefónica</option>
+                        <option value="email">Email</option>
+                        <option value="nota">Nota de Seguimiento</option>
+                      </select>
+                    </div>
+                    <div class="mb-3">
+                      <label for="crm-contact-desc" class="form-label">Detalles del contacto</label>
+                      <textarea class="form-control" id="crm-contact-desc" rows="3" placeholder="Resumen de lo hablado..." required></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-premium w-100"><i class="fa-solid fa-floppy-disk me-1"></i> Guardar Historial</button>
+                  </form>
+                </div>
+              </div>
+            </div>
+            <!-- TAB 6: Documentación -->
+            <div class="tab-pane fade" id="tab-docs">
+              <div class="row">
+                <div class="col-md-8">
+                  <div class="table-responsive">
+                    <table class="table align-middle">
+                      <thead>
+                        <tr>
+                          <th>Documento</th>
+                          <th>Tipo</th>
+                          <th>Fecha Subida</th>
+                          <th>Acción</th>
+                        </tr>
+                      </thead>
+                      <tbody id="detail-docs-body"></tbody>
+                    </table>
+                  </div>
+                </div>
+                <div class="col-md-4 border-start">
+                  <h5>Subir Documento Digital</h5>
+                  <form id="formUploadDoc" enctype="multipart/form-data">
+                    <div class="mb-3">
+                      <label for="doc-type" class="form-label">Tipo de Documento</label>
+                      <select class="form-select" id="doc-type" required>
+                        <option value="dni">DNI</option>
+                        <option value="cedula">Cédula del Vehículo</option>
+                        <option value="licencia">Licencia de Conducir</option>
+                        <option value="afip">Constancia AFIP</option>
+                        <option value="pdf">Póliza PDF</option>
+                        <option value="foto">Fotos Siniestro</option>
+                        <option value="otro">Otro</option>
+                      </select>
+                    </div>
+                    <div class="mb-3">
+                      <label for="doc-file" class="form-label">Seleccionar Archivo</label>
+                      <input class="form-control" type="file" id="doc-file" required>
+                    </div>
+                    <button type="submit" class="btn btn-premium w-100"><i class="fa-solid fa-cloud-arrow-up me-1"></i> Subir Archivo</button>
+                  </form>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==========================================
+           3. PÓLIZAS PANEL
+           ========================================== -->
+      <section id="panel-polizas" class="panel-section d-none">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <div class="d-flex gap-2 w-70">
+            <input type="text" class="form-control" id="search-policy" placeholder="Buscar póliza por número o cliente...">
+            <select class="form-select" id="filter-policy-status" style="width: 180px;">
+              <option value="">Todos los Estados</option>
+              <option value="vigente">Vigentes</option>
+              <option value="vencida">Vencidas</option>
+              <option value="suspendida">Suspendidas</option>
+            </select>
+            <select class="form-select" id="filter-policy-company" style="width: 180px;">
+              <option value="">Todas las Compañías</option>
+              <option value="Sancor Seguros">Sancor Seguros</option>
+              <option value="El Norte Seguros">El Norte Seguros</option>
+              <option value="Federación Patronal">Federación Patronal</option>
+              <option value="La Segunda">La Segunda</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="table table-hover align-middle">
+            <thead>
+              <tr>
+                <th>Nº Póliza</th>
+                <th>Cliente</th>
+                <th>Vehículo</th>
+                <th>Compañía</th>
+                <th>Cobertura</th>
+                <th>Fecha Vencimiento</th>
+                <th>Monto</th>
+                <th>Estado</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="policies-table-body">
+              <tr><td colspan="9" class="text-center py-4 text-muted">Cargando pólizas...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <!-- Paginación Pólizas -->
+        <div class="d-flex justify-content-between align-items-center mt-3" id="policies-pagination-wrap">
+          <span class="text-muted small" id="policies-pagination-info"></span>
+          <nav><ul class="pagination pagination-sm mb-0" id="policies-pagination"></ul></nav>
+        </div>
+      </section>
+
+      <!-- ==========================================
+           4. COTIZACIONES PANEL
+           ========================================== -->
+      <section id="panel-cotizaciones" class="panel-section d-none">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <div class="d-flex gap-2 w-70">
+            <input type="text" class="form-control" id="search-quote" placeholder="Buscar cotización por cliente o cobertura...">
+            <select class="form-select" id="filter-quote-status" style="width: 180px;">
+              <option value="">Todos los Estados</option>
+              <option value="pendiente">Pendientes</option>
+              <option value="enviada">Enviadas</option>
+              <option value="aceptada">Aceptadas</option>
+              <option value="rechazada">Rechazadas</option>
+            </select>
+          </div>
+          <button class="btn btn-premium" id="btn-new-quote-global"><i class="fa-solid fa-plus me-1"></i> Generar Cotización</button>
+        </div>
+
+        <!-- Vista de Embudo Comercial (Funnel) -->
+        <div class="row g-0 mb-4 px-2" style="background: rgba(226, 232, 240, 0.4); border-radius: 20px; padding: 1.5rem 0.5rem;">
+          <h5 class="px-2 mb-3 fw-bold"><i class="fa-solid fa-funnel-dollar text-primary me-2"></i>Embudo de Ventas (CRM Comercial)</h5>
+          
+          <div class="d-flex w-100 overflow-auto">
+            <!-- Etapa 1 -->
+            <div class="funnel-stage" data-stage="pendiente">
+              <div class="funnel-stage-header">
+                <span>Leads / Pendiente</span>
+                <span class="funnel-stage-badge" id="funnel-count-pending">0</span>
+              </div>
+              <div class="funnel-stage-cards" id="funnel-pending-body"></div>
+            </div>
+            <!-- Etapa 2 -->
+            <div class="funnel-stage" data-stage="enviada">
+              <div class="funnel-stage-header">
+                <span>Enviado</span>
+                <span class="funnel-stage-badge" id="funnel-count-sent">0</span>
+              </div>
+              <div class="funnel-stage-cards" id="funnel-sent-body"></div>
+            </div>
+            <!-- Etapa 3 -->
+            <div class="funnel-stage" data-stage="aceptada">
+              <div class="funnel-stage-header">
+                <span>Aceptado / Emitir</span>
+                <span class="funnel-stage-badge" id="funnel-count-accepted">0</span>
+              </div>
+              <div class="funnel-stage-cards" id="funnel-accepted-body"></div>
+            </div>
+            <!-- Etapa 4 -->
+            <div class="funnel-stage" data-stage="rechazada">
+              <div class="funnel-stage-header">
+                <span>Rechazado</span>
+                <span class="funnel-stage-badge" id="funnel-count-rejected">0</span>
+              </div>
+              <div class="funnel-stage-cards" id="funnel-rejected-body"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="table table-hover align-middle">
+            <thead>
+              <tr>
+                <th>Cliente</th>
+                <th>Compañía</th>
+                <th>Cobertura</th>
+                <th>Monto Cuota</th>
+                <th>Notas</th>
+                <th>Estado</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="quotes-table-body">
+              <tr><td colspan="7" class="text-center py-4 text-muted">Cargando cotizaciones...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ==========================================
+           5. SINIESTROS PANEL
+           ========================================== -->
+      <section id="panel-siniestros" class="panel-section d-none">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <input type="text" class="form-control w-50" id="search-claim" placeholder="Buscar siniestro por Nº, cliente o patente...">
+        </div>
+
+        <div class="table-responsive">
+          <table class="table table-hover align-middle">
+            <thead>
+              <tr>
+                <th>Nº Siniestro</th>
+                <th>Cliente</th>
+                <th>Compañía / Póliza</th>
+                <th>Vehículo (Patente)</th>
+                <th>Fecha Siniestro</th>
+                <th>Descripción</th>
+                <th>Estado</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="claims-table-body">
+              <tr><td colspan="8" class="text-center py-4 text-muted">Cargando siniestros...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ==========================================
+           6. AGENDA PANEL
+           ========================================== -->
+      <section id="panel-agenda" class="panel-section d-none">
+        <div class="row g-4">
+          <!-- Calendar List -->
+          <div class="col-md-8">
+            <div class="app-card">
+              <div class="app-card-title">
+                <span>Listado de Recordatorios y Tareas</span>
+                <button class="btn btn-sm btn-premium" id="btn-add-task"><i class="fa-solid fa-plus me-1"></i> Agregar Tarea</button>
+              </div>
+              
+              <div class="table-responsive">
+                <table class="table align-middle">
+                  <thead>
+                    <tr>
+                      <th>Tarea / Evento</th>
+                      <th>Asociado a</th>
+                      <th>Fecha Límite</th>
+                      <th>Tipo</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody id="agenda-table-body">
+                    <tr><td colspan="5" class="text-center py-4 text-muted">Cargando agenda...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <!-- Integrated Quick Notes -->
+          <div class="col-md-4">
+            <div class="app-card">
+              <div class="app-card-title">Notas Rápidas</div>
+              <textarea class="form-control mb-3" id="quick-notes-area" rows="10" placeholder="Escribe aquí notas temporales del día... (Se guardarán localmente en este navegador)"></textarea>
+              <button class="btn btn-sm btn-premium w-100" id="btn-save-quick-notes"><i class="fa-solid fa-floppy-disk me-1"></i> Guardar Nota Temporal</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==========================================
+           7. COMISIONES PANEL
+           ========================================== -->
+      <section id="panel-comisiones" class="panel-section d-none">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <div class="d-flex gap-2 w-70">
+            <select class="form-select" id="filter-com-period" style="width: 180px;">
+              <option value="">Todos los Períodos</option>
+            </select>
+            <select class="form-select" id="filter-com-company" style="width: 180px;">
+              <option value="">Todas las Compañías</option>
+              <option value="Sancor Seguros">Sancor Seguros</option>
+              <option value="El Norte Seguros">El Norte Seguros</option>
+              <option value="Federación Patronal">Federación Patronal</option>
+              <option value="La Segunda">La Segunda</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="table table-hover align-middle">
+            <thead>
+              <tr>
+                <th>Póliza</th>
+                <th>Cliente</th>
+                <th>Compañía</th>
+                <th>Período</th>
+                <th>Monto Póliza</th>
+                <th>% Comisión</th>
+                <th>Total Comisión</th>
+                <th>Estado Cobro</th>
+                <th class="action-col">Acción</th>
+              </tr>
+            </thead>
+            <tbody id="comisiones-table-body">
+              <tr><td colspan="9" class="text-center py-4 text-muted">Cargando comisiones...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ==========================================
+           8. REPORTES PANEL
+           ========================================== -->
+      <section id="panel-reportes" class="panel-section d-none">
+        <div class="row g-4">
+          <div class="col-md-6">
+            <div class="app-card">
+              <div class="app-card-title">Exportar Datos</div>
+              <p class="text-muted">Seleccione el reporte que desea exportar a su equipo en formato PDF formal para presentación o Excel para planillas contables.</p>
+              
+              <div class="mb-3">
+                <label for="report-select-type" class="form-label fw-bold">Tipo de Reporte</label>
+                <select class="form-select" id="report-select-type">
+                  <option value="clients">Clientes Activos</option>
+                  <option value="policies">Pólizas Vigentes y Vencidas</option>
+                  <option value="commissions">Comisiones y Producción</option>
+                  <option value="claims">Siniestralidad y Seguimiento</option>
+                </select>
+              </div>
+
+              <div class="d-flex gap-3 mt-4">
+                <button class="btn btn-premium w-50" id="btn-export-pdf">
+                  <i class="fa-solid fa-file-pdf me-2"></i> Exportar a PDF
+                </button>
+                <button class="btn btn-success w-50" id="btn-export-excel">
+                  <i class="fa-solid fa-file-excel me-2"></i> Exportar a Excel
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="col-md-6">
+            <div class="app-card">
+              <div class="app-card-title">Resumen de Producción Anual</div>
+              <p class="text-muted">Porcentaje de pólizas emitidas agrupadas por compañía aseguradora.</p>
+              <div style="position: relative; height: 230px;">
+                <canvas id="chartProduccionCompania"></canvas>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- =========================================================================
+       MODALES DEL CRM (SE REUTILIZAN DINÁMICAMENTE CON JS)
+       ========================================================================= -->
+
+  <!-- 1. MODAL CLIENTE -->
+  <div class="modal fade" id="modalCliente" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="modalClienteTitle">Nuevo Cliente</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <form id="formCliente">
+            <input type="hidden" id="cliente-id-input">
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label for="cliente-nombre" class="form-label">Nombre y Apellido *</label>
+                <input type="text" class="form-control" id="cliente-nombre" required>
+              </div>
+              <div class="col-md-6">
+                <label for="cliente-doc" class="form-label">DNI / CUIT *</label>
+                <input type="text" class="form-control" id="cliente-doc" required>
+              </div>
+              <div class="col-md-4">
+                <label for="cliente-birth" class="form-label">Fecha Nacimiento</label>
+                <input type="date" class="form-control" id="cliente-birth">
+              </div>
+              <div class="col-md-4">
+                <label for="cliente-phone" class="form-label">Teléfono</label>
+                <input type="text" class="form-control" id="cliente-phone">
+              </div>
+              <div class="col-md-4">
+                <label for="cliente-email" class="form-label">Email</label>
+                <input type="email" class="form-control" id="cliente-email">
+              </div>
+              <div class="col-md-6">
+                <label for="cliente-address" class="form-label">Dirección</label>
+                <input type="text" class="form-control" id="cliente-address">
+              </div>
+              <div class="col-md-6">
+                <label for="cliente-province" class="form-label">Provincia</label>
+                <select class="form-select" id="cliente-province">
+                  <!-- Cargado dinámicamente -->
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label for="cliente-city" class="form-label">Localidad</label>
+                <select class="form-select" id="cliente-city">
+                  <!-- Dependiente de la provincia -->
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label for="cliente-estado" class="form-label">Estado</label>
+                <select class="form-select" id="cliente-estado">
+                  <option value="activo" selected>Activo</option>
+                  <option value="inactivo">Inactivo</option>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label for="cliente-risk" class="form-label">Riesgo de Baja</label>
+                <select class="form-select" id="cliente-risk">
+                  <option value="0" selected>Normal</option>
+                  <option value="1">Riesgo Alto de Baja</option>
+                </select>
+              </div>
+              <div class="col-12">
+                <label for="cliente-notes" class="form-label">Observaciones</label>
+                <textarea class="form-control" id="cliente-notes" rows="2"></textarea>
+              </div>
+            </div>
+            <div class="modal-footer px-0 pb-0 mt-4">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+              <button type="submit" class="btn btn-premium">Guardar Cliente</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. MODAL VEHÍCULO -->
+  <div class="modal fade" id="modalVehiculo" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Vincular Vehículo</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <form id="formVehiculo">
+            <input type="hidden" id="vehiculo-id-input">
+            <div class="row g-3">
+              <div class="col-12">
+                <label for="vehiculo-patente" class="form-label">Patente *</label>
+                <div class="input-group">
+                  <input type="text" class="form-control text-uppercase" id="vehiculo-patente" placeholder="Ej: AE543AA o HHH123" required>
+                  <button class="btn btn-primary" type="button" id="btn-buscar-patente" title="Buscar Datos de Patente">
+                    <i class="fa-solid fa-magnifying-glass me-1"></i> Buscar
+                  </button>
+                </div>
+              </div>
+              <div class="col-md-4">
+                <label for="vehiculo-marca" class="form-label">Marca *</label>
+                <select class="form-select" id="vehiculo-marca" required>
+                  <option value="">Seleccione Marca</option>
+                </select>
+              </div>
+              <div class="col-md-4">
+                <label for="vehiculo-modelo" class="form-label">Modelo *</label>
+                <select class="form-select" id="vehiculo-modelo" required disabled>
+                  <option value="">Seleccione Modelo</option>
+                </select>
+              </div>
+              <div class="col-md-4">
+                <label for="vehiculo-version" class="form-label">Versión *</label>
+                <select class="form-select" id="vehiculo-version" required disabled>
+                  <option value="">Seleccione Versión</option>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label for="vehiculo-anio" class="form-label">Año *</label>
+                <input type="number" class="form-control" id="vehiculo-anio" required>
+              </div>
+              <div class="col-md-6">
+                <label for="vehiculo-uso" class="form-label">Uso</label>
+                <select class="form-select" id="vehiculo-uso">
+                  <option value="particular" selected>Particular</option>
+                  <option value="comercial">Comercial</option>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label for="vehiculo-chasis" class="form-label">Nº Chasis</label>
+                <input type="text" class="form-control" id="vehiculo-chasis">
+              </div>
+              <div class="col-md-6">
+                <label for="vehiculo-motor" class="form-label">Nº Motor</label>
+                <input type="text" class="form-control" id="vehiculo-motor">
+              </div>
+            </div>
+            <div class="modal-footer px-0 pb-0 mt-4">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+              <button type="submit" class="btn btn-premium">Guardar Vehículo</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. MODAL EMITIR PÓLIZA -->
+  <div class="modal fade" id="modalPoliza" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Emitir Nueva Póliza</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <form id="formPoliza">
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label for="poliza-numero" class="form-label">Número de Póliza *</label>
+                <input type="text" class="form-control" id="poliza-numero" required>
+              </div>
+              <div class="col-md-6">
+                <label for="poliza-compania" class="form-label">Compañía Aseguradora *</label>
+                <select class="form-select" id="poliza-compania" required>
+                  <option value="Sancor Seguros">Sancor Seguros</option>
+                  <option value="El Norte Seguros">El Norte Seguros</option>
+                  <option value="Federación Patronal">Federación Patronal</option>
+                  <option value="La Segunda">La Segunda</option>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label for="poliza-inicio" class="form-label">Fecha de Inicio *</label>
+                <input type="date" class="form-control" id="poliza-inicio" required>
+              </div>
+              <div class="col-md-6">
+                <label for="poliza-vencimiento" class="form-label">Fecha de Vencimiento *</label>
+                <input type="date" class="form-control" id="poliza-vencimiento" required>
+              </div>
+              <div class="col-md-6">
+                <label for="poliza-vehiculo" class="form-label">Vehículo Vinculado</label>
+                <select class="form-select" id="poliza-vehiculo">
+                  <option value="">Ninguno</option>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label for="poliza-cobertura" class="form-label">Cobertura *</label>
+                <input type="text" class="form-control" id="poliza-cobertura" placeholder="Ej: Terceros Completo Premium" required>
+              </div>
+              <div class="col-md-4">
+                <label for="poliza-monto" class="form-label">Monto Anual Total *</label>
+                <input type="number" class="form-control" id="poliza-monto" required>
+              </div>
+              <div class="col-md-4">
+                <label for="poliza-cuota" class="form-label">Valor de Cuota Mensual *</label>
+                <input type="number" class="form-control" id="poliza-cuota" required>
+              </div>
+              <div class="col-md-4">
+                <label for="poliza-pago" class="form-label">Forma de Pago *</label>
+                <select class="form-select" id="poliza-pago" required>
+                  <option value="Débito Automático">Débito Automático</option>
+                  <option value="Tarjeta de Crédito">Tarjeta de Crédito</option>
+                  <option value="Cupón / Pago Fácil">Cupón / Pago Fácil</option>
+                  <option value="Transferencia Bancaria">Transferencia Bancaria</option>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label for="poliza-estado" class="form-label">Estado Inicial</label>
+                <select class="form-select" id="poliza-estado" required>
+                  <option value="vigente" selected>Vigente</option>
+                  <option value="vencida">Vencida</option>
+                  <option value="suspendida">Suspendida</option>
+                </select>
+              </div>
+            </div>
+            <div class="modal-footer px-0 pb-0 mt-4">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+              <button type="submit" class="btn btn-premium">Emitir Póliza</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. MODAL COTIZACIÓN -->
+  <div class="modal fade" id="modalCotizacion" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Generar Presupuesto Cotización</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <form id="formCotizacion">
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label for="cot-cliente-select" class="form-label">Cliente *</label>
+                <select class="form-select" id="cot-cliente-select" required>
+                  <option value="">Seleccione Cliente</option>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label for="cot-vehiculo-select" class="form-label">Vehículo del Cliente</label>
+                <select class="form-select" id="cot-vehiculo-select">
+                  <option value="">Seleccione Vehículo</option>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label for="cot-compania" class="form-label">Compañía Propuesta *</label>
+                <select class="form-select" id="cot-compania" required>
+                  <option value="Sancor Seguros">Sancor Seguros</option>
+                  <option value="El Norte Seguros">El Norte Seguros</option>
+                  <option value="Federación Patronal">Federación Patronal</option>
+                  <option value="La Segunda">La Segunda</option>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label for="cot-cobertura" class="form-label">Cobertura Sugerida *</label>
+                <input type="text" class="form-control" id="cot-cobertura" placeholder="Ej: Terceros Completo con Granizo" required>
+              </div>
+              <div class="col-md-4">
+                <label for="cot-monto" class="form-label">Monto Total Estimado *</label>
+                <input type="number" class="form-control" id="cot-monto" required>
+              </div>
+              <div class="col-md-4">
+                <label for="cot-cuota" class="form-label">Valor Cuota Mensual *</label>
+                <input type="number" class="form-control" id="cot-cuota" required>
+              </div>
+              <div class="col-md-4">
+                <label for="cot-estado" class="form-label">Estado *</label>
+                <select class="form-select" id="cot-estado" required>
+                  <option value="pendiente" selected>Pendiente</option>
+                  <option value="enviada">Enviada</option>
+                  <option value="aceptada">Aceptada</option>
+                  <option value="rechazada">Rechazada</option>
+                </select>
+              </div>
+              <div class="col-12">
+                <label for="cot-notas" class="form-label">Notas / Observaciones</label>
+                <textarea class="form-control" id="cot-notes" rows="2" placeholder="Detalles de la comparativa de precios..."></textarea>
+              </div>
+            </div>
+            <div class="modal-footer px-0 pb-0 mt-4">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+              <button type="submit" class="btn btn-premium">Guardar Cotización</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. MODAL CONVERTIR COTIZACIÓN A PÓLIZA -->
+  <div class="modal fade" id="modalConvertirCotizacion" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header bg-success text-white">
+          <h5 class="modal-title"><i class="fa-solid fa-check-double me-2"></i>Emitir Póliza desde Cotización</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <form id="formConvertirCotizacion">
+            <input type="hidden" id="convert-cot-id">
+            <p>Se dará de alta la póliza usando los montos y coberturas aprobados de la cotización.</p>
+            <div class="row g-3">
+              <div class="col-12">
+                <label for="convert-numero" class="form-label">Número de Póliza Oficial *</label>
+                <input type="text" class="form-control" id="convert-numero" required>
+              </div>
+              <div class="col-md-6">
+                <label for="convert-inicio" class="form-label">Fecha de Inicio *</label>
+                <input type="date" class="form-control" id="convert-inicio" required>
+              </div>
+              <div class="col-md-6">
+                <label for="convert-vencimiento" class="form-label">Fecha de Vencimiento *</label>
+                <input type="date" class="form-control" id="convert-vencimiento" required>
+              </div>
+              <div class="col-12">
+                <label for="convert-pago" class="form-label">Forma de Pago *</label>
+                <select class="form-select" id="convert-pago" required>
+                  <option value="Débito Automático">Débito Automático</option>
+                  <option value="Tarjeta de Crédito">Tarjeta de Crédito</option>
+                  <option value="Cupón / Pago Fácil">Cupón / Pago Fácil</option>
+                  <option value="Transferencia Bancaria">Transferencia Bancaria</option>
+                </select>
+              </div>
+            </div>
+            <div class="modal-footer px-0 pb-0 mt-4">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+              <button type="submit" class="btn btn-success">Emitir Póliza Oficial</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6. MODAL AGENDA -->
+  <div class="modal fade" id="modalAgenda" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Agregar Tarea</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <form id="formAgenda">
+            <div class="row g-3">
+              <div class="col-12">
+                <label for="agenda-titulo" class="form-label">Título de la Tarea / Evento *</label>
+                <input type="text" class="form-control" id="agenda-titulo" required>
+              </div>
+              <div class="col-12">
+                <label for="agenda-cliente-select" class="form-label">Cliente Asociado (Opcional)</label>
+                <select class="form-select" id="agenda-cliente-select">
+                  <option value="">Ninguno</option>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label for="agenda-fecha" class="form-label">Fecha Límite *</label>
+                <input type="date" class="form-control" id="agenda-fecha" required>
+              </div>
+              <div class="col-md-6">
+                <label for="agenda-tipo" class="form-label">Tipo *</label>
+                <select class="form-select" id="agenda-tipo" required>
+                  <option value="llamada">Llamada</option>
+                  <option value="reunion">Reunión</option>
+                  <option value="renovacion">Renovación</option>
+                  <option value="recordatorio">Recordatorio</option>
+                </select>
+              </div>
+              <div class="col-12">
+                <label for="agenda-desc" class="form-label">Descripción</label>
+                <textarea class="form-control" id="agenda-desc" rows="3"></textarea>
+              </div>
+            </div>
+            <div class="modal-footer px-0 pb-0 mt-4">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+              <button type="submit" class="btn btn-premium">Guardar Tarea</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 7. MODAL SINIESTRO -->
+  <div class="modal fade" id="modalSiniestro" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Denunciar Siniestro</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <form id="formSiniestro">
+            <input type="hidden" id="siniestro-id-input">
+            <div class="row g-3">
+              <div class="col-12">
+                <label for="siniestro-numero" class="form-label">Número de Siniestro Compañía *</label>
+                <input type="text" class="form-control" id="siniestro-numero" required>
+              </div>
+              <div class="col-md-6">
+                <label for="siniestro-poliza-select" class="form-label">Póliza del Cliente *</label>
+                <select class="form-select" id="siniestro-poliza-select" required>
+                  <option value="">Seleccione Póliza</option>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label for="siniestro-fecha" class="form-label">Fecha del Suceso *</label>
+                <input type="date" class="form-control" id="siniestro-fecha" required>
+              </div>
+              <div class="col-12">
+                <label for="siniestro-desc" class="form-label">Descripción del Siniestro *</label>
+                <textarea class="form-control" id="siniestro-desc" rows="3" placeholder="Detallar daños, terceros involucrados, etc." required></textarea>
+              </div>
+              <div class="col-12">
+                <label for="siniestro-estado" class="form-label">Estado Inicial</label>
+                <select class="form-select" id="siniestro-estado" required>
+                  <option value="denunciado" selected>Denunciado</option>
+                  <option value="en_proceso">En proceso</option>
+                  <option value="doc_pendiente">Documentación pendiente</option>
+                  <option value="resuelto">Resuelto</option>
+                </select>
+              </div>
+            </div>
+            <div class="modal-footer px-0 pb-0 mt-4">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+              <button type="submit" class="btn btn-premium">Registrar Siniestro</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 8. MODAL IMPORTAR CLIENTES DESDE EXCEL -->
+  <div class="modal fade" id="modalImportarClientes" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="fa-solid fa-file-import text-primary me-2"></i>Importar Clientes desde Excel</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-muted small">Sube una planilla Excel (.xlsx, .xls) con la información de tus clientes. Las columnas deben incluir:</p>
+          <ul class="text-muted small">
+            <li><strong>Nombre</strong> o <strong>Nombre Completo</strong> (Obligatorio)</li>
+            <li><strong>DNI/CUIT</strong> o <strong>Documento</strong> (Obligatorio - Clave de duplicados)</li>
+            <li>Fecha de Nacimiento, Teléfono, Email, Dirección, Localidad, Observaciones (Opcionales)</li>
+          </ul>
+          <div class="alert alert-info small mt-2">
+            💡 <strong>Nota:</strong> Si el DNI o CUIT ya existe en el sistema, los datos se actualizarán automáticamente sin duplicar al cliente.
+          </div>
+          <form id="formImportarClientes" enctype="multipart/form-data">
+            <div class="mb-3">
+              <label for="excel-file" class="form-label fw-bold">Seleccionar Planilla Excel *</label>
+              <input class="form-control" type="file" id="excel-file" accept=".xlsx, .xls" required>
+            </div>
+            <div class="modal-footer px-0 pb-0 mt-4">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+              <button type="submit" class="btn btn-premium" id="btn-submit-import">
+                <i class="fa-solid fa-upload me-1"></i> Subir e Importar
+              </button>
+            </div>
+          </form>
+          <div id="import-result" class="alert d-none mt-3"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 9. MODAL RENOVACION (CUATRIMESTRAL VS ANUAL) -->
+  <div class="modal fade" id="modalRenovacion" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header bg-success text-white">
+          <h5 class="modal-title"><i class="fa-solid fa-rotate me-2"></i>Renovación de Póliza</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <form id="formRenovacion">
+            <input type="hidden" id="renovar-poliza-id">
+            <div class="mb-3">
+              <label class="form-label fw-bold">Tipo de Renovación</label>
+              <div class="form-check mb-2">
+                <input class="form-check-input" type="radio" name="tipoRenovacion" id="ren-tipo-cuatrimestral" value="cuatrimestral" checked>
+                <label class="form-check-label" for="ren-tipo-cuatrimestral">
+                  <strong>Renovación Cuatrimestral (Refacturación)</strong>
+                  <div class="small text-muted">Mantiene el mismo número de póliza, incrementa el número de renovación y extiende la vigencia por 4 meses (ajuste de cuota del 15%).</div>
+                </label>
+              </div>
+              <div class="form-check">
+                <input class="form-check-input" type="radio" name="tipoRenovacion" id="ren-tipo-anual" value="anual">
+                <label class="form-check-label" for="ren-tipo-anual">
+                  <strong>Renovación Anual (Nuevo Contrato)</strong>
+                  <div class="small text-muted">Requiere un nuevo número de póliza, reinicia la renovación a 0 y extiende la vigencia por 1 año (ajuste de cuota del 30%).</div>
+                </label>
+              </div>
+            </div>
+            
+            <div class="mb-3 d-none" id="div-nuevo-numero-poliza">
+              <label for="ren-nuevo-numero" class="form-label fw-bold">Nuevo Número de Póliza *</label>
+              <input type="text" class="form-control" id="ren-nuevo-numero" placeholder="Ej: POL-TOY-9999">
+            </div>
+
+            <div class="modal-footer px-0 pb-0 mt-4">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+              <button type="submit" class="btn btn-success">Procesar Renovación</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Bootstrap Bundle JS -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <!-- Custom JS Application logic -->
+  <script src="/js/app.js"></script>
+</body>
+</html>

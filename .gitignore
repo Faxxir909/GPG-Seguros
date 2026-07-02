@@ -1,0 +1,8 @@
+node_modules/
+gpg_seguros.db
+gpg_seguros.db-shm
+gpg_seguros.db-wal
+uploads/
+.env
+*.log
+.gemini/
