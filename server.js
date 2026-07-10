@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 const path = require('path');
 const fs = require('fs');
 const fileUpload = require('express-fileupload');
@@ -13,8 +14,11 @@ const PORT = process.env.PORT || 3000;
 // Registrar logger HTTP
 app.use(morgan('dev'));
 
-// Habilitar CORS
-app.use(cors());
+// Habilitar CORS con credenciales (necesario para cookies)
+app.use(cors({ origin: true, credentials: true }));
+
+// Cookie parser (para leer httpOnly cookies del JWT)
+app.use(cookieParser());
 
 // Middleware para procesar JSON y datos de formularios
 app.use(express.json());

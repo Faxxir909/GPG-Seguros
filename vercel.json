@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "buildCommand": "npm install && npm run build",
+  "framework": "nodejs",
+  "settings": {
+    "minify": true
+  }
+}
+

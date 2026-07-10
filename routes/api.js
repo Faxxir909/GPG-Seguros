@@ -16,24 +16,36 @@ const uploadController = require('../controllers/uploadController');
 const JWT_SECRET = process.env.JWT_SECRET || 'gpg_seguros_secret_key_12345';
 
 // Middleware para verificar JWT y roles
+// Lee el token desde la cookie httpOnly (principal) o Authorization header (fallback)
 function checkRole(roles) {
   return (req, res, next) => {
-    const authHeader = req.headers['authorization'];
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'No autorizado. Falta token de autenticación.' });
+    // 1. Leer desde cookie httpOnly (método seguro)
+    let token = req.cookies?.gpg_token;
+
+    // 2. Fallback: Authorization header (para clientes API/Postman)
+    if (!token) {
+      const authHeader = req.headers['authorization'];
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        token = authHeader.split(' ')[1];
+      }
     }
 
-    const token = authHeader.split(' ')[1];
+    if (!token) {
+      return res.status(401).json({ error: 'No autorizado. Inicie sesión para continuar.' });
+    }
+
     try {
       const decoded = jwt.verify(token, JWT_SECRET);
-      req.user = decoded; // Adjuntar datos de usuario
+      req.user = decoded;
 
       if (roles && !roles.includes(decoded.rol)) {
         return res.status(403).json({ error: 'Acceso denegado. Permisos insuficientes.' });
       }
       next();
     } catch (err) {
-      return res.status(401).json({ error: 'Token inválido o expirado.' });
+      // Cookie expirada o inválida: borrarla y redirigir
+      res.clearCookie('gpg_token');
+      return res.status(401).json({ error: 'Sesión expirada. Por favor inicie sesión nuevamente.' });
     }
   };
 }
@@ -41,6 +53,7 @@ function checkRole(roles) {
 // 1. AUTENTICACIÓN
 router.post('/auth/login', authController.login);
 router.post('/auth/google', authController.googleLogin);
+router.post('/auth/logout', authController.logout);
 router.get('/auth/google-client-id', (req, res) => {
   res.json({ clientId: process.env.GOOGLE_CLIENT_ID || null });
 });
