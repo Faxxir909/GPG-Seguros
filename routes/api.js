@@ -50,6 +50,8 @@ router.get('/vehicles/lookup', checkRole(['admin', 'productor']), vehicleControl
 // 5. GESTIÓN DE PÓLIZAS
 router.get('/policies', checkRole(['admin', 'productor', 'administrativo']), policyController.getPolicies);
 router.post('/policies', checkRole(['admin', 'productor']), policyController.createPolicy);
+router.post('/policies/parse-pdf', checkRole(['admin', 'productor']), policyController.parsePolicyPdf);
+router.post('/policies/smart-create', checkRole(['admin', 'productor']), policyController.smartCreatePolicy);
 router.put('/policies/:id', checkRole(['admin', 'productor']), policyController.updatePolicy);
 router.post('/policies/:id/renew', checkRole(['admin', 'productor']), policyController.renewPolicy);
 router.delete('/policies/:id', checkRole(['admin']), policyController.deletePolicy);

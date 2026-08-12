@@ -263,6 +263,9 @@
               <input type="text" class="form-control border-start-0" id="search-client" placeholder="Buscar cliente por nombre, DNI o CUIT...">
             </div>
             <div class="d-flex gap-2">
+              <button class="btn btn-primary shadow-sm" data-bs-toggle="modal" data-bs-target="#modalCargaInteligente">
+                <i class="fa-solid fa-wand-magic-sparkles me-2"></i> Carga Inteligente PDF
+              </button>
               <button class="btn btn-premium-outline" id="btn-import-clients-modal" data-bs-toggle="modal" data-bs-target="#modalImportarClientes">
                 <i class="fa-solid fa-file-excel me-2"></i> Importar Excel
               </button>
@@ -493,24 +496,27 @@
            3. PÓLIZAS PANEL
            ========================================== -->
       <section id="panel-polizas" class="panel-section d-none">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-          <div class="d-flex gap-2 w-70">
-            <input type="text" class="form-control" id="search-policy" placeholder="Buscar póliza por número o cliente...">
-            <select class="form-select" id="filter-policy-status" style="width: 180px;">
-              <option value="">Todos los Estados</option>
-              <option value="vigente">Vigentes</option>
-              <option value="vencida">Vencidas</option>
-              <option value="suspendida">Suspendidas</option>
-            </select>
-            <select class="form-select" id="filter-policy-company" style="width: 180px;">
-              <option value="">Todas las Compañías</option>
-              <option value="Sancor Seguros">Sancor Seguros</option>
-              <option value="El Norte Seguros">El Norte Seguros</option>
-              <option value="Federación Patronal">Federación Patronal</option>
-              <option value="La Segunda">La Segunda</option>
-            </select>
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <div class="d-flex gap-2 w-70">
+              <input type="text" class="form-control" id="search-policy" placeholder="Buscar póliza por número o cliente...">
+              <select class="form-select" id="filter-policy-status" style="width: 180px;">
+                <option value="">Todos los Estados</option>
+                <option value="vigente">Vigentes</option>
+                <option value="vencida">Vencidas</option>
+                <option value="suspendida">Suspendidas</option>
+              </select>
+              <select class="form-select" id="filter-policy-company" style="width: 180px;">
+                <option value="">Todas las Compañías</option>
+                <option value="Sancor Seguros">Sancor Seguros</option>
+                <option value="El Norte Seguros">El Norte Seguros</option>
+                <option value="Federación Patronal">Federación Patronal</option>
+                <option value="La Segunda">La Segunda</option>
+              </select>
+            </div>
+            <button class="btn btn-primary shadow-sm" data-bs-toggle="modal" data-bs-target="#modalCargaInteligente">
+              <i class="fa-solid fa-wand-magic-sparkles me-2"></i> Carga Inteligente PDF
+            </button>
           </div>
-        </div>
 
         <div class="table-responsive">
           <table class="table table-hover align-middle">
@@ -1352,6 +1358,188 @@
     </div>
   </div>
 
+  <!-- 11. MODAL CARGA INTELIGENTE (PDF PARSER) -->
+  <div class="modal fade" id="modalCargaInteligente" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl">
+      <div class="modal-content">
+        <div class="modal-header bg-gradient bg-primary text-white">
+          <h5 class="modal-title fw-bold"><i class="fa-solid fa-wand-magic-sparkles me-2"></i> Carga Inteligente de Póliza desde PDF</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body p-4">
+          <!-- Dropzone -->
+          <div id="smart-dropzone" class="border border-2 border-dashed rounded-4 p-5 text-center bg-light transition-all cursor-pointer">
+            <i class="fa-solid fa-cloud-arrow-up text-primary display-4 mb-3"></i>
+            <h5 class="fw-bold text-dark mb-1">Arrastrá el PDF del frente de póliza aquí</h5>
+            <p class="text-muted small mb-3">Soporta frentes de póliza de El Norte, Sancor, Federación Patronal, La Segunda, Zurich, Rivadavia y más.</p>
+            <label class="btn btn-primary px-4 py-2 rounded-pill shadow-sm cursor-pointer">
+              <i class="fa-solid fa-folder-open me-2"></i> Seleccionar PDF desde tu equipo
+              <input type="file" id="smart-pdf-file" accept="application/pdf" class="d-none">
+            </label>
+          </div>
+
+          <!-- Spinner -->
+          <div id="smart-loading" class="text-center py-5 d-none">
+            <div class="spinner-border text-primary me-2" style="width: 3rem; height: 3rem;" role="status"></div>
+            <h5 class="fw-bold text-dark mt-3">Analizando documento con Inteligencia artificial...</h5>
+            <p class="text-muted small">Extrayendo datos de Asegurado, Vehículo, Cuotas y Vigencias...</p>
+          </div>
+
+          <!-- Form Preview -->
+          <div id="smart-form-preview" class="d-none">
+            <div class="alert alert-info py-2 px-3 small d-flex align-items-center mb-3">
+              <i class="fa-solid fa-circle-info fs-5 me-2"></i>
+              <span>Revisá los datos extraídos automáticamente del PDF. Podés corregir cualquier campo antes de confirmar.</span>
+            </div>
+
+            <form id="formSmartCreate">
+              <div class="row g-3">
+                <!-- 1. ASEGURADO -->
+                <div class="col-md-4">
+                  <div class="card h-100 border-0 shadow-sm bg-light">
+                    <div class="card-header bg-white fw-bold text-primary border-0 pt-3">
+                      <i class="fa-solid fa-user me-2"></i> Datos del Asegurado
+                    </div>
+                    <div class="card-body">
+                      <div class="mb-2">
+                        <label class="form-label small fw-bold">Nombre Completo *</label>
+                        <input type="text" class="form-control form-control-sm" id="smart-cli-nombre" required>
+                      </div>
+                      <div class="mb-2">
+                        <label class="form-label small fw-bold">CUIT / DNI *</label>
+                        <input type="text" class="form-control form-control-sm" id="smart-cli-doc" required>
+                      </div>
+                      <div class="mb-2">
+                        <label class="form-label small fw-bold">Teléfono / WhatsApp</label>
+                        <input type="text" class="form-control form-control-sm" id="smart-cli-telefono">
+                      </div>
+                      <div class="mb-2">
+                        <label class="form-label small fw-bold">Dirección</label>
+                        <input type="text" class="form-control form-control-sm" id="smart-cli-direccion">
+                      </div>
+                      <div class="row g-2">
+                        <div class="col-6">
+                          <label class="form-label small fw-bold">Localidad</label>
+                          <input type="text" class="form-control form-control-sm" id="smart-cli-localidad">
+                        </div>
+                        <div class="col-6">
+                          <label class="form-label small fw-bold">Provincia</label>
+                          <input type="text" class="form-control form-control-sm" id="smart-cli-provincia">
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 2. VEHÍCULO -->
+                <div class="col-md-4">
+                  <div class="card h-100 border-0 shadow-sm bg-light">
+                    <div class="card-header bg-white fw-bold text-success border-0 pt-3">
+                      <i class="fa-solid fa-car me-2"></i> Datos del Vehículo
+                    </div>
+                    <div class="card-body">
+                      <div class="mb-2">
+                        <label class="form-label small fw-bold">Patente *</label>
+                        <input type="text" class="form-control form-control-sm text-uppercase font-monospace fw-bold" id="smart-veh-patente" required>
+                      </div>
+                      <div class="row g-2 mb-2">
+                        <div class="col-6">
+                          <label class="form-label small fw-bold">Marca</label>
+                          <input type="text" class="form-control form-control-sm" id="smart-veh-marca">
+                        </div>
+                        <div class="col-6">
+                          <label class="form-label small fw-bold">Modelo</label>
+                          <input type="text" class="form-control form-control-sm" id="smart-veh-modelo">
+                        </div>
+                      </div>
+                      <div class="mb-2">
+                        <label class="form-label small fw-bold">Versión</label>
+                        <input type="text" class="form-control form-control-sm" id="smart-veh-version">
+                      </div>
+                      <div class="mb-2">
+                        <label class="form-label small fw-bold">Año</label>
+                        <input type="number" class="form-control form-control-sm" id="smart-veh-anio">
+                      </div>
+                      <div class="row g-2">
+                        <div class="col-6">
+                          <label class="form-label small fw-bold">Motor</label>
+                          <input type="text" class="form-control form-control-sm" id="smart-veh-motor">
+                        </div>
+                        <div class="col-6">
+                          <label class="form-label small fw-bold">Chasis</label>
+                          <input type="text" class="form-control form-control-sm" id="smart-veh-chasis">
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 3. PÓLIZA -->
+                <div class="col-md-4">
+                  <div class="card h-100 border-0 shadow-sm bg-light">
+                    <div class="card-header bg-white fw-bold text-dark border-0 pt-3">
+                      <i class="fa-solid fa-file-contract me-2"></i> Datos de la Póliza
+                    </div>
+                    <div class="card-body">
+                      <div class="mb-2">
+                        <label class="form-label small fw-bold">Nº de Póliza *</label>
+                        <input type="text" class="form-control form-control-sm fw-bold" id="smart-pol-numero" required>
+                      </div>
+                      <div class="mb-2">
+                        <label class="form-label small fw-bold">Compañía Aseguradora</label>
+                        <input type="text" class="form-control form-control-sm" id="smart-pol-compania" required>
+                      </div>
+                      <div class="row g-2 mb-2">
+                        <div class="col-6">
+                          <label class="form-label small fw-bold">Vigencia Desde</label>
+                          <input type="date" class="form-control form-control-sm" id="smart-pol-inicio" required>
+                        </div>
+                        <div class="col-6">
+                          <label class="form-label small fw-bold">Vigencia Hasta</label>
+                          <input type="date" class="form-control form-control-sm" id="smart-pol-vencimiento" required>
+                        </div>
+                      </div>
+                      <div class="mb-2">
+                        <label class="form-label small fw-bold">Cobertura</label>
+                        <input type="text" class="form-control form-control-sm" id="smart-pol-cobertura">
+                      </div>
+                      <div class="row g-2 mb-2">
+                        <div class="col-6">
+                          <label class="form-label small fw-bold">Premio Total ($)</label>
+                          <input type="number" step="0.01" class="form-control form-control-sm fw-bold text-success" id="smart-pol-monto">
+                        </div>
+                        <div class="col-6">
+                          <label class="form-label small fw-bold">Valor Cuota ($)</label>
+                          <input type="number" step="0.01" class="form-control form-control-sm" id="smart-pol-cuota">
+                        </div>
+                      </div>
+                      <div class="mb-0">
+                        <label class="form-label small fw-bold">Forma de Pago</label>
+                        <select class="form-select form-select-sm" id="smart-pol-pago">
+                          <option value="debito_automatico">Débito Automático</option>
+                          <option value="tarjeta_credito">Tarjeta de Crédito</option>
+                          <option value="efectivo">Efectivo / Cobranza</option>
+                          <option value="transferencia">Transferencia</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="d-flex justify-content-end gap-2 mt-4 pt-2 border-top">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="submit" class="btn btn-success px-4 py-2 fw-bold shadow-sm">
+                  <i class="fa-solid fa-circle-check me-2"></i> Confirmar y Registrar Todo (1 Clic)
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Chart.js CDN -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <!-- Bootstrap Bundle JS -->
@@ -1367,6 +1555,7 @@
   <script src="/js/comisiones.js"></script>  <!-- Comisiones -->
   <script src="/js/dashboard.js"></script>   <!-- Dashboard y gráficos -->
   <script src="/js/reportes.js"></script>    <!-- Reportes PDF/Excel -->
+  <script src="/js/smartParser.js"></script> <!-- Carga Inteligente PDF -->
   <script src="/js/router.js"></script>      <!-- SPA Router + init (debe ir último) -->
 </body>
 </html>

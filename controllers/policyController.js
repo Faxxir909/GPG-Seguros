@@ -149,10 +149,161 @@ async function deletePolicy(req, res, next) {
   }
 }
 
+const { parsePolicyPdfBuffer } = require('../services/pdfParserService');
+
+// Parsear PDF de póliza y extraer datos estructurados
+async function parsePolicyPdf(req, res, next) {
+  if (!req.files || (!req.files.archivo && !req.files.pdf)) {
+    const error = new Error('No se subió ningún archivo PDF.');
+    error.status = 400;
+    return next(error);
+  }
+
+  const file = req.files.archivo || req.files.pdf;
+  try {
+    const extracted = await parsePolicyPdfBuffer(file.data);
+    res.json({ success: true, extracted });
+  } catch (err) {
+    console.error('[parsePolicyPdf Error]:', err);
+    next(new Error('Error al procesar el archivo PDF: ' + err.message));
+  }
+}
+
+// Carga Inteligente en 1 clic (Crea/Actualiza Cliente, Vehículo y Póliza en transacción)
+async function smartCreatePolicy(req, res, next) {
+  const { cliente, vehiculo, poliza } = req.body;
+  if (!cliente || !cliente.nombre || !poliza || !poliza.numero_poliza) {
+    const error = new Error('Los datos del cliente y la póliza son obligatorios.');
+    error.status = 400;
+    return next(error);
+  }
+
+  const { pool } = require('../db');
+  const clientConn = await pool.connect();
+
+  try {
+    await clientConn.query('BEGIN');
+
+    // 1. Obtener o crear Cliente por DNI/CUIT
+    let clienteId = null;
+    if (cliente.dni_cuit) {
+      const existingClient = await clientConn.query('SELECT id FROM clientes WHERE dni_cuit = $1', [cliente.dni_cuit.trim()]);
+      if (existingClient.rows.length > 0) {
+        clienteId = existingClient.rows[0].id;
+        // Actualizar datos de contacto si viene info nueva
+        await clientConn.query(`
+          UPDATE clientes 
+          SET nombre = $1, telefono = COALESCE($2, telefono), email = COALESCE($3, email),
+              direccion = COALESCE($4, direccion), localidad = COALESCE($5, localidad), provincia = COALESCE($6, provincia)
+          WHERE id = $7
+        `, [cliente.nombre, cliente.telefono || null, cliente.email || null, cliente.direccion || null, cliente.localidad || null, cliente.provincia || null, clienteId]);
+      }
+    }
+
+    if (!clienteId) {
+      const newClientRes = await clientConn.query(`
+        INSERT INTO clientes (nombre, dni_cuit, telefono, email, direccion, localidad, provincia, estado, riesgo_baja)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 'activo', 0)
+        RETURNING id
+      `, [
+        cliente.nombre,
+        cliente.dni_cuit ? cliente.dni_cuit.trim() : `TEMP-${Date.now()}`,
+        cliente.telefono || null,
+        cliente.email || null,
+        cliente.direccion || null,
+        cliente.localidad || null,
+        cliente.provincia || 'Córdoba'
+      ]);
+      clienteId = newClientRes.rows[0].id;
+    }
+
+    // 2. Obtener o crear Vehículo si viene info
+    let vehiculoId = null;
+    if (vehiculo && (vehiculo.patente || vehiculo.marca)) {
+      if (vehiculo.patente) {
+        const cleanPat = vehiculo.patente.toUpperCase().replace(/[^A-Z0-9]/g, '');
+        const existingVeh = await clientConn.query('SELECT id FROM vehiculos WHERE patente = $1', [cleanPat]);
+        if (existingVeh.rows.length > 0) {
+          vehiculoId = existingVeh.rows[0].id;
+        } else {
+          const newVehRes = await clientConn.query(`
+            INSERT INTO vehiculos (cliente_id, marca, modelo, version, anio, patente, chasis, motor, uso)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            RETURNING id
+          `, [
+            clienteId,
+            vehiculo.marca || 'Chevrolet',
+            vehiculo.modelo || 'S-10',
+            vehiculo.version || null,
+            vehiculo.anio ? parseInt(vehiculo.anio) : 2020,
+            cleanPat,
+            vehiculo.chasis || null,
+            vehiculo.motor || null,
+            vehiculo.uso || 'particular'
+          ]);
+          vehiculoId = newVehRes.rows[0].id;
+        }
+      }
+    }
+
+    // 3. Crear la Póliza
+    const polRes = await clientConn.query(`
+      INSERT INTO polizas (numero_poliza, numero_renovacion, fecha_inicio, fecha_vencimiento, cobertura, estado, monto_total, valor_cuota, forma_pago, compania, cliente_id, vehiculo_id)
+      VALUES ($1, 0, $2, $3, $4, 'vigente', $5, $6, $7, $8, $9, $10)
+      RETURNING id
+    `, [
+      poliza.numero_poliza,
+      poliza.fecha_inicio,
+      poliza.fecha_vencimiento,
+      poliza.cobertura || 'Cobertura Completa',
+      parseFloat(poliza.monto_total || 0),
+      parseFloat(poliza.valor_cuota || 0),
+      poliza.forma_pago || 'efectivo',
+      poliza.compania || 'El Norte Seguros',
+      clienteId,
+      vehiculoId
+    ]);
+
+    const polizaId = polRes.rows[0].id;
+
+    // 4. Calcular e insertar comisión dinámica
+    const tasa = await getCommissionRate(poliza.compania, poliza.cobertura);
+    const montoComision = parseFloat(poliza.valor_cuota || 0) * tasa;
+    const periodo = poliza.fecha_inicio.substring(0, 7);
+    await clientConn.query(`
+      INSERT INTO comisiones (poliza_id, compania, monto_poliza, tasa_comision, monto_comision, estado_pago, periodo)
+      VALUES ($1, $2, $3, $4, $5, 'pendiente', $6)
+    `, [polizaId, poliza.compania, parseFloat(poliza.monto_total || 0), tasa, montoComision, periodo]);
+
+    // 5. Historial CRM
+    await clientConn.query(`
+      INSERT INTO crm_logs (cliente_id, tipo_contacto, descripcion)
+      VALUES ($1, 'nota', $2)
+    `, [clienteId, `Carga Inteligente: Se emitió póliza Nº ${poliza.numero_poliza} (${poliza.compania}) desde lectura automática de PDF.`]);
+
+    await clientConn.query('COMMIT');
+
+    res.status(201).json({
+      success: true,
+      poliza_id: polizaId,
+      cliente_id: clienteId,
+      vehiculo_id: vehiculoId,
+      message: '¡Póliza, Cliente y Vehículo registrados exitosamente con Carga Inteligente!'
+    });
+  } catch (err) {
+    await clientConn.query('ROLLBACK');
+    next(err);
+  } finally {
+    clientConn.release();
+  }
+}
+
 module.exports = {
   getPolicies,
   createPolicy,
   updatePolicy,
   renewPolicy,
-  deletePolicy
+  deletePolicy,
+  parsePolicyPdf,
+  smartCreatePolicy
 };

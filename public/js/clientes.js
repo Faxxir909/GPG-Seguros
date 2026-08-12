@@ -360,8 +360,16 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-new-client')?.addEventListener('click', () => {
     document.getElementById('formCliente').reset();
     document.getElementById('cliente-id-input').value = '';
-    setProvinceAndCity('', '');
-    document.getElementById('modalClienteTitle').innerText = 'Nuevo Cliente';
+    setProvinceAndCity('Córdoba', '');
+    document.getElementById('modalClienteTitle').innerText = 'Nuevo Cliente (Alta Rápida)';
+  });
+
+  // Auto-formateador y limpiador de CUIT/DNI al tipear
+  document.getElementById('cliente-doc')?.addEventListener('blur', (e) => {
+    const raw = e.target.value.replace(/[^0-9]/g, '');
+    if (raw.length === 11) {
+      e.target.value = `${raw.substring(0,2)}-${raw.substring(2,10)}-${raw.substring(10,11)}`;
+    }
   });
 
   // Guardar / actualizar cliente
