@@ -100,8 +100,12 @@ async function initDatabase() {
     const schemaPath = path.join(__dirname, 'schema.sql');
     if (fs.existsSync(schemaPath)) {
       const schemaSql = fs.readFileSync(schemaPath, 'utf8');
-      await pool.query(schemaSql);
-      console.log('Schema verificado/aplicado en PostgreSQL.');
+      try {
+        await pool.query(schemaSql);
+        console.log('Schema verificado/aplicado en PostgreSQL.');
+      } catch (schemaErr) {
+        console.error('[Schema SQL Warning]:', schemaErr.message || schemaErr);
+      }
     }
 
     // 2. Verificar si ya existen usuarios; si no, cargar datos semilla

@@ -2,8 +2,6 @@
 -- GPG SEGUROS - Schema PostgreSQL 18
 -- =============================================================
 
-CREATE EXTENSION IF NOT EXISTS unaccent;
-
 -- 1. USUARIOS
 CREATE TABLE IF NOT EXISTS usuarios (
     id         SERIAL PRIMARY KEY,
