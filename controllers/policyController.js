@@ -4,7 +4,7 @@ const { getCommissionRate } = require('../services/commissionService');
 async function getPolicies(req, res, next) {
   try {
     const policies = await db.all(`
-      SELECT p.*, c.nombre as cliente_nombre, v.marca, v.modelo, v.patente
+      SELECT p.*, c.nombre as cliente_nombre, v.marca, v.modelo, v.patente, v.motor, v.chasis
       FROM polizas p
       JOIN clientes c ON p.cliente_id = c.id
       LEFT JOIN vehiculos v ON p.vehiculo_id = v.id
@@ -422,8 +422,16 @@ async function importPolicies(req, res, next) {
         fecha_vencimiento = d.toISOString().substring(0, 10);
       }
 
-      const monto_total = parseFloat(String(row['Monto Total'] || row['Premio Total'] || row['Premio'] || row['Monto'] || row['monto_total'] || 0).replace(/[^0-9\.]/g, '')) || 0;
-      const valor_cuota = parseFloat(String(row['Valor Cuota'] || row['Cuota'] || row['Importe Cuota'] || row['valor_cuota'] || 0).replace(/[^0-9\.]/g, '')) || 0;
+      let monto_total = parseFloat(String(row['Monto Total'] || row['Premio Total'] || row['Premio'] || row['Monto'] || row['monto_total'] || row['Importe Total'] || row['Importe'] || 0).replace(/[^0-9\.]/g, '')) || 0;
+      let valor_cuota = parseFloat(String(row['Valor Cuota'] || row['Cuota'] || row['Importe Cuota'] || row['valor_cuota'] || row['Cuota Mensual'] || row['Valor de Cuota'] || 0).replace(/[^0-9\.]/g, '')) || 0;
+
+      if (valor_cuota === 0 && monto_total > 0) {
+        valor_cuota = monto_total;
+      }
+      if (monto_total === 0 && valor_cuota > 0) {
+        monto_total = valor_cuota;
+      }
+
       let forma_pago = String(row['Medio de Pago'] || row['Forma de Pago'] || row['Pago'] || row['forma_pago'] || 'debito_automatico').trim();
       if (forma_pago.toLowerCase().includes('débito') || forma_pago.toLowerCase().includes('debito')) {
         forma_pago = 'debito_automatico';
@@ -438,6 +446,9 @@ async function importPolicies(req, res, next) {
       const direccion = row['Domicilio'] || row['Dirección'] || row['Direccion'] || row['direccion'] || null;
       const localidad = row['Localidad'] || row['localidad'] || row['Ciudad'] || null;
       const provincia = row['Provincia'] || row['provincia'] || 'Córdoba';
+
+      let motor = row['Motor'] || row['Nº Motor'] || row['N° Motor'] || row['Número de Motor'] || row['Numero Motor'] || row['motor'] || row['Nro Motor'] || null;
+      let chasis = row['Chasis'] || row['Nº Chasis'] || row['N° Chasis'] || row['Número de Chasis'] || row['Numero Chasis'] || row['chasis'] || row['Nro Chasis'] || null;
 
       // 1. Buscar o crear cliente
       let clienteId = null;
@@ -491,6 +502,11 @@ async function importPolicies(req, res, next) {
           modelo = bienAsegurado;
           marca = 'General';
         }
+
+        const mMot = bienAsegurado.match(/(?:Motor|MOT|M)\s*:?\s*([A-Z0-9-]+)/i);
+        if (mMot && !motor) motor = mMot[1];
+        const mCha = bienAsegurado.match(/(?:Chasis|CHA|C)\s*:?\s*([A-Z0-9]{8,20})/i);
+        if (mCha && !chasis) chasis = mCha[1];
       }
 
       if (patente || marca || modelo) {
@@ -499,19 +515,26 @@ async function importPolicies(req, res, next) {
           const existingVeh = await db.get('SELECT id FROM vehiculos WHERE patente = ?', [cleanPat]);
           if (existingVeh) {
             vehiculoId = existingVeh.id;
+            if (motor || chasis) {
+              await db.run(`
+                UPDATE vehiculos SET motor = COALESCE(?, motor), chasis = COALESCE(?, chasis) WHERE id = ?
+              `, [motor ? String(motor).trim() : null, chasis ? String(chasis).trim() : null, vehiculoId]);
+            }
           }
         }
         if (!vehiculoId) {
           const newVehRes = await db.run(`
-            INSERT INTO vehiculos (cliente_id, marca, modelo, version, anio, patente, uso)
-            VALUES (?, ?, ?, ?, ?, ?, 'particular')
+            INSERT INTO vehiculos (cliente_id, marca, modelo, version, anio, patente, chasis, motor, uso)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'particular')
           `, [
             clienteId,
             marca ? String(marca).trim() : 'Marca General',
             modelo ? String(modelo).trim() : 'Modelo General',
             null,
             anio ? parseInt(anio) : 2020,
-            cleanPat || null
+            cleanPat || null,
+            chasis ? String(chasis).trim() : null,
+            motor ? String(motor).trim() : null
           ]);
           vehiculoId = newVehRes.id;
         }
