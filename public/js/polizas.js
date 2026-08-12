@@ -209,7 +209,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function openEditPolicyModal(policyId) {
-  const p = policiesList.find(item => item.id === policyId);
+  const p = allPolicies.find(item => item.id === policyId);
   if (!p) return;
   document.getElementById('edit-poliza-id').value = p.id;
   document.getElementById('edit-vehiculo-id').value = p.vehiculo_id || '';
