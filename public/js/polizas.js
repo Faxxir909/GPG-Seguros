@@ -116,4 +116,52 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     } catch (err) { showToast('Error al renovar póliza: ' + err.message, 'danger'); }
   });
+
+  // Importar pólizas desde Excel
+  document.getElementById('btn-import-policies-modal')?.addEventListener('click', () => {
+    const resultDiv = document.getElementById('import-policy-result');
+    if (resultDiv) { resultDiv.classList.add('d-none'); resultDiv.innerHTML = ''; }
+  });
+
+  document.getElementById('formImportarPolizas')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fileInput = document.getElementById('excel-policy-file');
+    const resultDiv = document.getElementById('import-policy-result');
+    const btnSubmit = document.getElementById('btn-submit-import-policies');
+
+    if (!fileInput || fileInput.files.length === 0) return;
+
+    btnSubmit.disabled = true;
+    btnSubmit.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span> Importando...`;
+
+    const formData = new FormData();
+    formData.append('archivo', fileInput.files[0]);
+
+    try {
+      const response = await fetch('/api/policies/import', {
+        method: 'POST',
+        credentials: 'include',
+        body: formData
+      });
+      const data = await response.json();
+
+      resultDiv.classList.remove('d-none', 'alert-danger', 'alert-success');
+      if (response.ok) {
+        resultDiv.classList.add('alert-success');
+        resultDiv.innerHTML = `<strong>¡Importación finalizada!</strong><br>• Pólizas Nuevas: ${data.insertadas}<br>• Actualizadas: ${data.actualizadas}<br>• Omitidas: ${data.omitidas}`;
+        fileInput.value = '';
+        loadPoliciesList();
+      } else {
+        resultDiv.classList.add('alert-danger');
+        resultDiv.innerText = data.error || 'Error al procesar el archivo.';
+      }
+    } catch (err) {
+      resultDiv.classList.remove('d-none', 'alert-success');
+      resultDiv.classList.add('alert-danger');
+      resultDiv.innerText = 'Error de conexión.';
+    } finally {
+      btnSubmit.disabled = false;
+      btnSubmit.innerHTML = `<i class="fa-solid fa-upload me-1"></i> Subir e Importar Pólizas`;
+    }
+  });
 });

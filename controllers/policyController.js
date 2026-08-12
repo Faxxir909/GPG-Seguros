@@ -299,6 +299,312 @@ async function smartCreatePolicy(req, res, next) {
   }
 }
 
+function parseExcelDate(val) {
+  if (!val) return new Date().toISOString().substring(0, 10);
+  if (val instanceof Date) {
+    return val.toISOString().substring(0, 10);
+  }
+  if (typeof val === 'number') {
+    const date = new Date(Math.round((val - (25567 + 2)) * 86400 * 1000));
+    return date.toISOString().substring(0, 10);
+  }
+  const str = String(val).trim();
+  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(str)) {
+    const parts = str.split('/');
+    const day = parts[0].padStart(2, '0');
+    const month = parts[1].padStart(2, '0');
+    const year = parts[2];
+    return `${year}-${month}-${day}`;
+  }
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+    return str.substring(0, 10);
+  }
+  return str;
+}
+
+// Importar pólizas desde Excel
+async function importPolicies(req, res, next) {
+  if (!req.files || Object.keys(req.files).length === 0) {
+    const error = new Error('No se subió ningún archivo Excel.');
+    error.status = 400;
+    return next(error);
+  }
+
+  const archivo = req.files.archivo;
+  if (!archivo) {
+    const error = new Error('No se encontró el archivo subido.');
+    error.status = 400;
+    return next(error);
+  }
+
+  const XLSX = require('xlsx');
+
+  try {
+    const workbook = XLSX.read(archivo.data, { type: 'buffer' });
+    if (!workbook || !workbook.SheetNames || !workbook.SheetNames.length) {
+      const error = new Error('El archivo Excel no contiene hojas válidas.');
+      error.status = 400;
+      return next(error);
+    }
+
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+    let jsonData = XLSX.utils.sheet_to_json(worksheet);
+
+    // Auto-detectar la fila de encabezados si hay filas de título arriba
+    if (jsonData.length === 0 || !jsonData.some(row => row['Póliza'] || row['Nº Póliza'] || row['numero_poliza'] || row['Tomador'] || row['Cliente'])) {
+      const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+      const headerIndex = rawRows.findIndex(r => Array.isArray(r) && r.length >= 3 && r.some(cell => typeof cell === 'string' && /^(Póliza|Nº Póliza|Poliza|Nro Póliza|Tomador|Cliente|Rama)$/i.test(cell.trim())));
+      if (headerIndex !== -1) {
+        const headers = rawRows[headerIndex];
+        jsonData = rawRows.slice(headerIndex + 1).filter(r => r && r.length > 1).map(r => {
+          const obj = {};
+          headers.forEach((h, i) => {
+            if (h && r[i] !== undefined) obj[h] = r[i];
+          });
+          return obj;
+        });
+      }
+    }
+
+    if (!jsonData || !jsonData.length) {
+      const error = new Error('El archivo Excel está vacío o no tiene un formato válido.');
+      error.status = 400;
+      return next(error);
+    }
+
+    let insertadas = 0;
+    let actualizadas = 0;
+    let omitidas = 0;
+
+    for (const row of jsonData) {
+      const numero_poliza = row['Nº Póliza'] || row['Póliza'] || row['Poliza'] || row['Nro Póliza'] || row['Nro Poliza'] || row['Número de Póliza'] || row['numero_poliza'] || row['PÓLIZA'];
+      let cliente_nombre = row['Cliente'] || row['Nombre'] || row['Tomador'] || row['Asegurado'] || row['cliente'] || row['Nombre y Apellido'];
+
+      if (!numero_poliza || !cliente_nombre) {
+        omitidas++;
+        continue;
+      }
+
+      const numPolStr = String(numero_poliza).trim();
+      let nombreStr = String(cliente_nombre).trim();
+      let dniStr = null;
+
+      // Si el tomador viene en formato "1116571 - BERGIA, JORGE FABIAN"
+      if (nombreStr.includes(' - ')) {
+        const parts = nombreStr.split(' - ');
+        dniStr = parts[0].trim();
+        let rawName = parts.slice(1).join(' - ').trim();
+        if (rawName.includes(',')) {
+          const nameParts = rawName.split(',');
+          rawName = `${nameParts[1].trim()} ${nameParts[0].trim()}`;
+        }
+        nombreStr = rawName;
+      }
+
+      if (!dniStr) {
+        let dni_cuit = row['DNI/CUIT'] || row['DNI'] || row['CUIT'] || row['Documento'] || row['dni_cuit'] || row['dni'] || row['cuit'] || null;
+        dniStr = dni_cuit ? String(dni_cuit).trim() : null;
+      }
+
+      const compania = String(row['Compañía'] || row['Compañia'] || row['Aseguradora'] || row['compania'] || row['COMPAÑÍA'] || 'Sancor Seguros').trim();
+      const cobertura = String(row['Cobertura'] || row['Plan'] || row['Ramo'] || row['cobertura'] || 'Cobertura Completa').trim();
+      
+      const fecha_inicio_raw = row['Fecha Inicio'] || row['Inicio vigencia póliza'] || row['Vigencia Desde'] || row['Desde'] || row['fecha_inicio'] || null;
+      const fecha_vencimiento_raw = row['Fecha Vencimiento'] || row['Fin vigencia póliza'] || row['Vigencia Hasta'] || row['Hasta'] || row['Vencimiento'] || row['fecha_vencimiento'] || null;
+      
+      const fecha_inicio = parseExcelDate(fecha_inicio_raw);
+      let fecha_vencimiento = parseExcelDate(fecha_vencimiento_raw);
+      
+      if (!fecha_vencimiento_raw) {
+        const d = new Date(fecha_inicio);
+        d.setFullYear(d.getFullYear() + 1);
+        fecha_vencimiento = d.toISOString().substring(0, 10);
+      }
+
+      const monto_total = parseFloat(String(row['Monto Total'] || row['Premio Total'] || row['Premio'] || row['Monto'] || row['monto_total'] || 0).replace(/[^0-9\.]/g, '')) || 0;
+      const valor_cuota = parseFloat(String(row['Valor Cuota'] || row['Cuota'] || row['Importe Cuota'] || row['valor_cuota'] || 0).replace(/[^0-9\.]/g, '')) || 0;
+      let forma_pago = String(row['Medio de Pago'] || row['Forma de Pago'] || row['Pago'] || row['forma_pago'] || 'debito_automatico').trim();
+      if (forma_pago.toLowerCase().includes('débito') || forma_pago.toLowerCase().includes('debito')) {
+        forma_pago = 'debito_automatico';
+      } else if (forma_pago.toLowerCase().includes('cupon') || forma_pago.toLowerCase().includes('efectivo')) {
+        forma_pago = 'efectivo';
+      } else if (forma_pago.toLowerCase().includes('credito') || forma_pago.toLowerCase().includes('crédito')) {
+        forma_pago = 'tarjeta_credito';
+      }
+
+      const telefono = row['Teléfonos'] || row['Teléfono'] || row['Telefono'] || row['telefono'] || row['Tel'] || null;
+      const email = row['Email'] || row['email'] || row['Correo'] || null;
+      const direccion = row['Domicilio'] || row['Dirección'] || row['Direccion'] || row['direccion'] || null;
+      const localidad = row['Localidad'] || row['localidad'] || row['Ciudad'] || null;
+      const provincia = row['Provincia'] || row['provincia'] || 'Córdoba';
+
+      // 1. Buscar o crear cliente
+      let clienteId = null;
+      if (dniStr) {
+        const existingClient = await db.get('SELECT id FROM clientes WHERE dni_cuit = ?', [dniStr]);
+        if (existingClient) {
+          clienteId = existingClient.id;
+        }
+      }
+
+      if (!clienteId) {
+        const existingByName = await db.get('SELECT id FROM clientes WHERE LOWER(nombre) = LOWER(?)', [nombreStr]);
+        if (existingByName) {
+          clienteId = existingByName.id;
+        }
+      }
+
+      if (!clienteId) {
+        const newClientRes = await db.run(`
+          INSERT INTO clientes (nombre, dni_cuit, telefono, email, direccion, localidad, provincia, estado, riesgo_baja)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 'activo', 0)
+        `, [
+          nombreStr,
+          dniStr || `TEMP-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          telefono ? String(telefono).trim() : null,
+          email ? String(email).trim() : null,
+          direccion ? String(direccion).trim() : null,
+          localidad ? String(localidad).trim() : null,
+          provincia ? String(provincia).trim() : 'Córdoba'
+        ]);
+        clienteId = newClientRes.id;
+      }
+
+      // 2. Vehículo opcional
+      let vehiculoId = null;
+      let patente = row['Patente'] || row['Dominio'] || row['patente'] || null;
+      let marca = row['Marca'] || row['marca'] || null;
+      let modelo = row['Modelo'] || row['modelo'] || null;
+      let anio = row['Año'] || row['Anio'] || row['anio'] || null;
+
+      const bienAsegurado = row['Bien Asegurado'] || row['Vehículo'] || row['Vehiculo'] || null;
+      if (bienAsegurado && typeof bienAsegurado === 'string') {
+        if (bienAsegurado.includes('|')) {
+          const bParts = bienAsegurado.split('|');
+          const vehDesc = bParts[0].trim();
+          patente = bParts[1].trim();
+          const vehWords = vehDesc.split(' ');
+          marca = vehWords[0];
+          modelo = vehWords.slice(1).join(' ');
+        } else if (!patente) {
+          modelo = bienAsegurado;
+          marca = 'General';
+        }
+      }
+
+      if (patente || marca || modelo) {
+        const cleanPat = patente ? String(patente).toUpperCase().replace(/[^A-Z0-9]/g, '') : null;
+        if (cleanPat) {
+          const existingVeh = await db.get('SELECT id FROM vehiculos WHERE patente = ?', [cleanPat]);
+          if (existingVeh) {
+            vehiculoId = existingVeh.id;
+          }
+        }
+        if (!vehiculoId) {
+          const newVehRes = await db.run(`
+            INSERT INTO vehiculos (cliente_id, marca, modelo, version, anio, patente, uso)
+            VALUES (?, ?, ?, ?, ?, ?, 'particular')
+          `, [
+            clienteId,
+            marca ? String(marca).trim() : 'Marca General',
+            modelo ? String(modelo).trim() : 'Modelo General',
+            null,
+            anio ? parseInt(anio) : 2020,
+            cleanPat || null
+          ]);
+          vehiculoId = newVehRes.id;
+        }
+      }
+
+      // 3. Crear o actualizar póliza
+      const existingPol = await db.get('SELECT id FROM polizas WHERE numero_poliza = ?', [numPolStr]);
+
+      if (existingPol) {
+        await db.run(`
+          UPDATE polizas SET
+            fecha_inicio = ?,
+            fecha_vencimiento = ?,
+            cobertura = ?,
+            estado = 'vigente',
+            monto_total = ?,
+            valor_cuota = ?,
+            forma_pago = ?,
+            compania = ?,
+            cliente_id = ?,
+            vehiculo_id = COALESCE(?, vehiculo_id)
+          WHERE id = ?
+        `, [
+          fecha_inicio,
+          fecha_vencimiento,
+          cobertura,
+          monto_total,
+          valor_cuota,
+          forma_pago,
+          compania,
+          clienteId,
+          vehiculoId,
+          existingPol.id
+        ]);
+        actualizadas++;
+
+        const tasa = await getCommissionRate(compania, cobertura);
+        const montoComision = valor_cuota * tasa;
+        const periodo = fecha_inicio.substring(0, 7);
+
+        const existingCom = await db.get('SELECT id FROM comisiones WHERE poliza_id = ?', [existingPol.id]);
+        if (existingCom) {
+          await db.run(`
+            UPDATE comisiones SET
+              compania = ?, monto_poliza = ?, tasa_comision = ?, monto_comision = ?, periodo = ?
+            WHERE id = ?
+          `, [compania, monto_total, tasa, montoComision, periodo, existingCom.id]);
+        } else {
+          await db.run(`
+            INSERT INTO comisiones (poliza_id, compania, monto_poliza, tasa_comision, monto_comision, estado_pago, periodo)
+            VALUES (?, ?, ?, ?, ?, 'pendiente', ?)
+          `, [existingPol.id, compania, monto_total, tasa, montoComision, periodo]);
+        }
+      } else {
+        const polRes = await db.run(`
+          INSERT INTO polizas (numero_poliza, numero_renovacion, fecha_inicio, fecha_vencimiento, cobertura, estado, monto_total, valor_cuota, forma_pago, compania, cliente_id, vehiculo_id)
+          VALUES (?, 0, ?, ?, ?, 'vigente', ?, ?, ?, ?, ?, ?)
+        `, [
+          numPolStr,
+          fecha_inicio,
+          fecha_vencimiento,
+          cobertura,
+          monto_total,
+          valor_cuota,
+          forma_pago,
+          compania,
+          clienteId,
+          vehiculoId
+        ]);
+        insertadas++;
+
+        const tasa = await getCommissionRate(compania, cobertura);
+        const montoComision = valor_cuota * tasa;
+        const periodo = fecha_inicio.substring(0, 7);
+
+        await db.run(`
+          INSERT INTO comisiones (poliza_id, compania, monto_poliza, tasa_comision, monto_comision, estado_pago, periodo)
+          VALUES (?, ?, ?, ?, ?, 'pendiente', ?)
+        `, [polRes.id, compania, monto_total, tasa, montoComision, periodo]);
+      }
+    }
+
+    res.json({
+      message: 'Proceso de importación de pólizas finalizado con éxito.',
+      insertadas,
+      actualizadas,
+      omitidas
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getPolicies,
   createPolicy,
@@ -306,5 +612,6 @@ module.exports = {
   renewPolicy,
   deletePolicy,
   parsePolicyPdf,
-  smartCreatePolicy
+  smartCreatePolicy,
+  importPolicies
 };

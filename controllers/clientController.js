@@ -2,8 +2,8 @@ const db = require('../db');
 
 // Validar DNI (7-8 dígitos) o CUIT/CUIL (11 dígitos con dígito verificador de AFIP)
 function validateDniOrCuit(val) {
-  if (!val) return false;
-  const clean = val.replace(/[^0-9]/g, '');
+  if (val === null || val === undefined || val === '') return false;
+  const clean = String(val).replace(/[^0-9]/g, '');
   
   if (clean.length === 7 || clean.length === 8) {
     return true;
@@ -155,15 +155,27 @@ async function importClients(req, res, next) {
   }
 
   const archivo = req.files.archivo;
+  if (!archivo) {
+    const error = new Error('No se encontró el archivo subido.');
+    error.status = 400;
+    return next(error);
+  }
+
   const XLSX = require('xlsx');
 
   try {
     const workbook = XLSX.read(archivo.data, { type: 'buffer' });
+    if (!workbook || !workbook.SheetNames || !workbook.SheetNames.length) {
+      const error = new Error('El archivo Excel no tiene hojas válidas.');
+      error.status = 400;
+      return next(error);
+    }
+
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
     const jsonData = XLSX.utils.sheet_to_json(worksheet);
 
-    if (!jsonData.length) {
+    if (!jsonData || !jsonData.length) {
       const error = new Error('El archivo Excel está vacío.');
       error.status = 400;
       return next(error);
@@ -173,53 +185,63 @@ async function importClients(req, res, next) {
     let actualizados = 0;
     let omitidos = 0;
 
-    // Ejecutar importación dentro de una transacción para atomicidad
-    const { pool } = require('../db');
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
+    for (const row of jsonData) {
+      const nombre = row['Nombre'] || row['Nombre y Apellido'] || row['nombre'] || row['Nombre Completo'];
+      let dni_cuit = row['DNI/CUIT'] || row['DNI'] || row['CUIT'] || row['dni'] || row['cuit'] || row['Documento'] || row['documento'];
 
-      for (const row of jsonData) {
-        const nombre = row['Nombre'] || row['Nombre y Apellido'] || row['nombre'] || row['Nombre Completo'];
-        let dni_cuit = row['DNI/CUIT'] || row['DNI'] || row['CUIT'] || row['dni'] || row['cuit'] || row['Documento'] || row['documento'];
+      if (!nombre || !dni_cuit) {
+        omitidos++;
+        continue;
+      }
 
-        if (!nombre || !dni_cuit) {
-          omitidos++;
-          continue;
-        }
+      dni_cuit = String(dni_cuit).trim();
 
-        dni_cuit = String(dni_cuit).trim();
+      // Omitir filas con CUITs/DNIs de formato inválido en importación
+      if (!validateDniOrCuit(dni_cuit)) {
+        omitidos++;
+        continue;
+      }
 
-        // Omitir filas con CUITs/DNIs de formato inválido en importación
-        if (!validateDniOrCuit(dni_cuit)) {
-          omitidos++;
-          continue;
-        }
+      const fecha_nacimiento = row['Fecha de Nacimiento'] || row['Fecha Nacimiento'] || row['fecha_nacimiento'] || null;
+      const telefono = row['Teléfono'] || row['Telefono'] || row['telefono'] || row['Tel'] || row['tel'] || null;
+      const email = row['Email'] || row['email'] || row['Correo'] || row['correo'] || null;
+      const direccion = row['Dirección'] || row['Direccion'] || row['direccion'] || null;
+      const localidad = row['Localidad'] || row['localidad'] || row['Ciudad'] || row['ciudad'] || null;
+      const provincia = row['Provincia'] || row['provincia'] || null;
+      const observaciones = row['Observaciones'] || row['observaciones'] || row['Notas'] || row['notas'] || null;
 
-        const fecha_nacimiento = row['Fecha de Nacimiento'] || row['Fecha Nacimiento'] || row['fecha_nacimiento'] || null;
-        const telefono = row['Teléfono'] || row['Telefono'] || row['telefono'] || row['Tel'] || row['tel'] || null;
-        const email = row['Email'] || row['email'] || row['Correo'] || row['correo'] || null;
-        const direccion = row['Dirección'] || row['Direccion'] || row['direccion'] || null;
-        const localidad = row['Localidad'] || row['localidad'] || row['Ciudad'] || row['ciudad'] || null;
-        const provincia = row['Provincia'] || row['provincia'] || null;
-        const observaciones = row['Observaciones'] || row['observaciones'] || row['Notas'] || row['notas'] || null;
+      const existe = await db.get('SELECT id FROM clientes WHERE dni_cuit = ?', [dni_cuit]);
 
-        const existe = await client.query('SELECT id FROM clientes WHERE dni_cuit = $1', [dni_cuit]);
-
-        await client.query(`
-          INSERT INTO clientes (nombre, dni_cuit, fecha_nacimiento, telefono, email, direccion, localidad, provincia, observaciones, estado, riesgo_baja)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-          ON CONFLICT(dni_cuit) DO UPDATE SET
-            nombre = EXCLUDED.nombre,
-            fecha_nacimiento = COALESCE(EXCLUDED.fecha_nacimiento, clientes.fecha_nacimiento),
-            telefono = COALESCE(EXCLUDED.telefono, clientes.telefono),
-            email = COALESCE(EXCLUDED.email, clientes.email),
-            direccion = COALESCE(EXCLUDED.direccion, clientes.direccion),
-            localidad = COALESCE(EXCLUDED.localidad, clientes.localidad),
-            provincia = COALESCE(EXCLUDED.provincia, clientes.provincia),
-            observaciones = COALESCE(EXCLUDED.observaciones, clientes.observaciones)
+      if (existe) {
+        await db.run(`
+          UPDATE clientes SET
+            nombre = ?,
+            fecha_nacimiento = COALESCE(?, fecha_nacimiento),
+            telefono = COALESCE(?, telefono),
+            email = COALESCE(?, email),
+            direccion = COALESCE(?, direccion),
+            localidad = COALESCE(?, localidad),
+            provincia = COALESCE(?, provincia),
+            observaciones = COALESCE(?, observaciones)
+          WHERE id = ?
         `, [
-          nombre,
+          String(nombre),
+          fecha_nacimiento ? String(fecha_nacimiento) : null,
+          telefono ? String(telefono) : null,
+          email ? String(email) : null,
+          direccion ? String(direccion) : null,
+          localidad ? String(localidad) : null,
+          provincia ? String(provincia) : null,
+          observaciones ? String(observaciones) : null,
+          existe.id
+        ]);
+        actualizados++;
+      } else {
+        await db.run(`
+          INSERT INTO clientes (nombre, dni_cuit, fecha_nacimiento, telefono, email, direccion, localidad, provincia, observaciones, estado, riesgo_baja)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
+          String(nombre),
           dni_cuit,
           fecha_nacimiento ? String(fecha_nacimiento) : null,
           telefono ? String(telefono) : null,
@@ -231,20 +253,8 @@ async function importClients(req, res, next) {
           'activo',
           0
         ]);
-
-        if (existe.rows.length > 0) {
-          actualizados++;
-        } else {
-          insertados++;
-        }
+        insertados++;
       }
-
-      await client.query('COMMIT');
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
     }
 
     res.json({

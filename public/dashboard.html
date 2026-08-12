@@ -513,9 +513,14 @@
                 <option value="La Segunda">La Segunda</option>
               </select>
             </div>
-            <button class="btn btn-primary shadow-sm" data-bs-toggle="modal" data-bs-target="#modalCargaInteligente">
-              <i class="fa-solid fa-wand-magic-sparkles me-2"></i> Carga Inteligente PDF
-            </button>
+            <div class="d-flex gap-2">
+              <button class="btn btn-outline-success shadow-sm" id="btn-import-policies-modal" data-bs-toggle="modal" data-bs-target="#modalImportarPolizas">
+                <i class="fa-solid fa-file-excel me-2"></i> Importar Excel
+              </button>
+              <button class="btn btn-primary shadow-sm" data-bs-toggle="modal" data-bs-target="#modalCargaInteligente">
+                <i class="fa-solid fa-wand-magic-sparkles me-2"></i> Carga Inteligente PDF
+              </button>
+            </div>
           </div>
 
         <div class="table-responsive">
@@ -1256,6 +1261,51 @@
             </div>
           </form>
           <div id="import-result" class="alert d-none mt-3"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 8.5. MODAL IMPORTAR PÓLIZAS DESDE EXCEL -->
+  <div class="modal fade" id="modalImportarPolizas" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="fa-solid fa-file-excel text-success me-2"></i>Importar Pólizas desde Excel</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-muted small">Sube una planilla Excel (.xlsx, .xls) con el listado de tus pólizas vigentes. El sistema vinculará o creará automáticamente los clientes y vehículos asociados.</p>
+          <div class="card bg-light border-0 mb-3 p-3">
+            <h6 class="fw-bold mb-2 small text-primary"><i class="fa-solid fa-table me-1"></i>Columnas reconocidas en el Excel:</h6>
+            <ul class="text-muted small mb-0">
+              <li><strong>Nº Póliza</strong> o <strong>Póliza</strong> (Obligatorio)</li>
+              <li><strong>Cliente</strong> o <strong>Nombre y Apellido</strong> (Obligatorio)</li>
+              <li><strong>DNI/CUIT</strong> (Recomendado para vincular cliente único)</li>
+              <li><strong>Compañía</strong> / <strong>Aseguradora</strong> (Ej: Sancor, El Norte, Federación Patronal)</li>
+              <li><strong>Cobertura</strong> (Ej: Terceros Cierre, Todo Riesgo, Responsabilidad Civil)</li>
+              <li><strong>Fecha Inicio</strong> / <strong>Vigencia Desde</strong> (DD/MM/YYYY o YYYY-MM-DD)</li>
+              <li><strong>Fecha Vencimiento</strong> / <strong>Vigencia Hasta</strong></li>
+              <li><strong>Monto Total</strong> / <strong>Premio</strong> y <strong>Valor Cuota</strong></li>
+              <li><strong>Patente</strong>, <strong>Marca</strong>, <strong>Modelo</strong> y <strong>Año</strong> (Opcional - Vehículo)</li>
+            </ul>
+          </div>
+          <div class="alert alert-info small mt-2">
+            💡 <strong>Nota:</strong> Si el número de póliza ya existe en el sistema, se actualizarán los datos sin duplicar registros. Si el cliente no existe, se creará automáticamente.
+          </div>
+          <form id="formImportarPolizas" enctype="multipart/form-data">
+            <div class="mb-3">
+              <label for="excel-policy-file" class="form-label fw-bold">Seleccionar Planilla Excel *</label>
+              <input class="form-control" type="file" id="excel-policy-file" accept=".xlsx, .xls" required>
+            </div>
+            <div class="modal-footer px-0 pb-0 mt-4">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+              <button type="submit" class="btn btn-success" id="btn-submit-import-policies">
+                <i class="fa-solid fa-upload me-1"></i> Subir e Importar Pólizas
+              </button>
+            </div>
+          </form>
+          <div id="import-policy-result" class="alert d-none mt-3"></div>
         </div>
       </div>
     </div>
