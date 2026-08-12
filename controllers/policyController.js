@@ -1,4 +1,5 @@
 const db = require('../db');
+const { getCommissionRate } = require('../services/commissionService');
 
 async function getPolicies(req, res, next) {
   try {
@@ -31,8 +32,8 @@ async function createPolicy(req, res, next) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [numero_poliza, numRen, fecha_inicio, fecha_vencimiento, cobertura, estado, monto_total, valor_cuota, forma_pago, compania, cliente_id, vehiculo_id]);
 
-    // Crear registro automático de comisión (por defecto 15%)
-    const tasa = 0.15;
+    // Crear registro automático de comisión según la tasa configurada para la compañía
+    const tasa = await getCommissionRate(compania, cobertura);
     const montoComision = valor_cuota * tasa;
     const periodo = fecha_inicio.substring(0, 7);
     await db.run(`
@@ -116,7 +117,7 @@ async function renewPolicy(req, res, next) {
 
     await db.run("UPDATE polizas SET estado = 'vencida' WHERE id = ?", [oldPolicy.id]);
 
-    const tasa = 0.15;
+    const tasa = await getCommissionRate(oldPolicy.compania, oldPolicy.cobertura);
     const montoComision = nuevoValorCuota * tasa;
     const periodo = format(nuevaFechaInicio).substring(0, 7);
     await db.run(`

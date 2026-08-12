@@ -65,6 +65,23 @@ async function updateClaim(req, res, next) {
   }
 }
 
+async function getClaimsByClient(req, res, next) {
+  try {
+    const claims = await db.all(`
+      SELECT s.*, c.nombre as cliente_nombre, v.marca, v.modelo, v.patente, p.numero_poliza, p.compania
+      FROM siniestros s
+      JOIN clientes c ON s.cliente_id = c.id
+      LEFT JOIN vehiculos v ON s.vehiculo_id = v.id
+      LEFT JOIN polizas p ON s.poliza_id = p.id
+      WHERE s.cliente_id = ?
+      ORDER BY s.fecha DESC
+    `, [req.params.id]);
+    res.json(claims);
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function deleteClaim(req, res, next) {
   try {
     await db.run('DELETE FROM siniestros WHERE id = ?', [req.params.id]);
@@ -76,6 +93,7 @@ async function deleteClaim(req, res, next) {
 
 module.exports = {
   getClaims,
+  getClaimsByClient,
   createClaim,
   updateClaim,
   deleteClaim

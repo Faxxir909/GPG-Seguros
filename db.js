@@ -1,4 +1,4 @@
-﻿require('dotenv').config();
+require('dotenv').config();
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 
@@ -89,15 +89,59 @@ async function initDatabase() {
     if (parseInt(userCount.count) === 0) {
       await seedDatabase();
     } else {
-      // Refrescar catálogo de vehículos siempre
-      await pool.query('DELETE FROM catalogo_vehiculos');
-      await seedCatalogo();
+      // Solo cargar catálogo de vehículos si está vacío (evitar DELETE + re-insert en cada inicio)
+      const catalogCount = await get('SELECT COUNT(*) AS count FROM catalogo_vehiculos');
+      if (parseInt(catalogCount.count) === 0) {
+        await seedCatalogo();
+      } else {
+        console.log('Catálogo de vehículos ya cargado (%d registros). Saltando recarga.', parseInt(catalogCount.count));
+      }
     }
+
+    // Verificar e inicializar tasas de comisión si no existen
+    await seedTasasComision();
 
     console.log('Base de datos inicializada correctamente.');
   } catch (error) {
     console.error('Error al inicializar la base de datos:', error.message);
     throw error;
+  }
+}
+
+async function seedTasasComision() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS tasas_comision (
+        id             SERIAL PRIMARY KEY,
+        compania       TEXT NOT NULL,
+        tipo_cobertura TEXT NOT NULL DEFAULT '*',
+        tasa           NUMERIC(5,4) NOT NULL DEFAULT 0.1500,
+        descripcion    TEXT,
+        activa         BOOLEAN NOT NULL DEFAULT TRUE,
+        creado_en      TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (compania, tipo_cobertura)
+      )
+    `);
+    const count = await pool.query('SELECT COUNT(*) as count FROM tasas_comision');
+    if (parseInt(count.rows[0].count) === 0) {
+      await pool.query(`
+        INSERT INTO tasas_comision (compania, tipo_cobertura, tasa, descripcion) VALUES
+          ('Federación Patronal', '*', 0.1500, 'Tasa genérica Federación Patronal'),
+          ('Sancor Seguros', '*', 0.1500, 'Tasa genérica Sancor'),
+          ('La Segunda', '*', 0.1200, 'Tasa genérica La Segunda'),
+          ('Zurich', '*', 0.1400, 'Tasa genérica Zurich'),
+          ('Rivadavia', '*', 0.1300, 'Tasa genérica Rivadavia'),
+          ('San Cristóbal', '*', 0.1500, 'Tasa genérica San Cristóbal'),
+          ('Mapfre', '*', 0.1200, 'Tasa genérica Mapfre'),
+          ('Allianz', '*', 0.1400, 'Tasa genérica Allianz'),
+          ('Mercantil Andina', '*', 0.1500, 'Tasa genérica Mercantil Andina'),
+          ('Berkley', '*', 0.1300, 'Tasa genérica Berkley')
+        ON CONFLICT DO NOTHING
+      `);
+      console.log('Tasas de comisión iniciales verficadas/creadas.');
+    }
+  } catch (err) {
+    console.error('Error al inicializar tasas_comision:', err.message);
   }
 }
 

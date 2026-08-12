@@ -1,4 +1,5 @@
 const db = require('../db');
+const { getCommissionRate } = require('../services/commissionService');
 
 async function getQuotes(req, res, next) {
   try {
@@ -92,7 +93,7 @@ async function convertQuote(req, res, next) {
     await db.run("UPDATE cotizaciones SET estado = 'aceptada' WHERE id = ?", [quote.id]);
 
     // Comisión
-    const tasa = 0.15;
+    const tasa = await getCommissionRate(quote.compania, quote.cobertura);
     const montoComision = quote.valor_cuota * tasa;
     const periodo = fecha_inicio.substring(0, 7);
     await db.run(`

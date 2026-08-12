@@ -123,8 +123,19 @@ async function apiFetch(url, options = {}) {
       window.location.href = '/index.html';
       return new Promise(() => {});
     }
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+    let errorMsg = `Error HTTP! Estado: ${response.status}`;
+    try {
+      const text = await response.text();
+      try {
+        const parsed = JSON.parse(text);
+        if (parsed && parsed.error) errorMsg = parsed.error;
+      } catch {
+        if (text && text.trim().length > 0 && text.length < 150) {
+          errorMsg = text.trim();
+        }
+      }
+    } catch {}
+    throw new Error(errorMsg);
   }
   return response.json();
 }
@@ -137,3 +148,46 @@ const formatDate = (dateStr) => {
   if (parts.length !== 3) return dateStr;
   return `${parts[2]}/${parts[1]}/${parts[0]}`;
 };
+
+/** Debounce para retrasar ejecuciones repetitivas */
+function debounce(fn, delay) {
+  let timeoutId;
+  return function (...args) {
+    if (timeoutId) clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => fn.apply(this, args), delay);
+  };
+}
+
+/** Mostrar filas de tabla con esqueleto de carga shimmer */
+function showTableSkeleton(tbodyId, colsCount = 6, rowsCount = 3) {
+  const tbody = document.getElementById(tbodyId);
+  if (!tbody) return;
+  let html = '';
+  for (let i = 0; i < rowsCount; i++) {
+    html += '<tr>';
+    for (let j = 0; j < colsCount; j++) {
+      html += `<td><div class="skeleton-shimmer" style="height: 16px; border-radius: 4px; width: ${60 + Math.random() * 30}%;"></div></td>`;
+    }
+    html += '</tr>';
+  }
+  tbody.innerHTML = html;
+}
+
+/** Mostrar timeline con esqueleto de carga shimmer */
+function showTimelineSkeleton(containerId, count = 3) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  let html = '';
+  for (let i = 0; i < count; i++) {
+    html += `
+      <div class="timeline-item skeleton">
+        <div class="timeline-icon bg-light"><div class="skeleton-shimmer" style="width:100%; height:100%; border-radius:50%;"></div></div>
+        <div class="timeline-date"><div class="skeleton-shimmer" style="height: 12px; width: 80px; border-radius: 4px;"></div></div>
+        <div class="timeline-content">
+          <div class="skeleton-shimmer" style="height: 14px; width: 40%; border-radius: 4px; margin-bottom: 6px;"></div>
+          <div class="skeleton-shimmer" style="height: 12px; width: 90%; border-radius: 4px;"></div>
+        </div>
+      </div>`;
+  }
+  container.innerHTML = html;
+}

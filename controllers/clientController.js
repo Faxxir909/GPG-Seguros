@@ -173,64 +173,78 @@ async function importClients(req, res, next) {
     let actualizados = 0;
     let omitidos = 0;
 
-    for (const row of jsonData) {
-      const nombre = row['Nombre'] || row['Nombre y Apellido'] || row['nombre'] || row['Nombre Completo'];
-      let dni_cuit = row['DNI/CUIT'] || row['DNI'] || row['CUIT'] || row['dni'] || row['cuit'] || row['Documento'] || row['documento'];
+    // Ejecutar importación dentro de una transacción para atomicidad
+    const { pool } = require('../db');
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
 
-      if (!nombre || !dni_cuit) {
-        omitidos++;
-        continue;
+      for (const row of jsonData) {
+        const nombre = row['Nombre'] || row['Nombre y Apellido'] || row['nombre'] || row['Nombre Completo'];
+        let dni_cuit = row['DNI/CUIT'] || row['DNI'] || row['CUIT'] || row['dni'] || row['cuit'] || row['Documento'] || row['documento'];
+
+        if (!nombre || !dni_cuit) {
+          omitidos++;
+          continue;
+        }
+
+        dni_cuit = String(dni_cuit).trim();
+
+        // Omitir filas con CUITs/DNIs de formato inválido en importación
+        if (!validateDniOrCuit(dni_cuit)) {
+          omitidos++;
+          continue;
+        }
+
+        const fecha_nacimiento = row['Fecha de Nacimiento'] || row['Fecha Nacimiento'] || row['fecha_nacimiento'] || null;
+        const telefono = row['Teléfono'] || row['Telefono'] || row['telefono'] || row['Tel'] || row['tel'] || null;
+        const email = row['Email'] || row['email'] || row['Correo'] || row['correo'] || null;
+        const direccion = row['Dirección'] || row['Direccion'] || row['direccion'] || null;
+        const localidad = row['Localidad'] || row['localidad'] || row['Ciudad'] || row['ciudad'] || null;
+        const provincia = row['Provincia'] || row['provincia'] || null;
+        const observaciones = row['Observaciones'] || row['observaciones'] || row['Notas'] || row['notas'] || null;
+
+        const existe = await client.query('SELECT id FROM clientes WHERE dni_cuit = $1', [dni_cuit]);
+
+        await client.query(`
+          INSERT INTO clientes (nombre, dni_cuit, fecha_nacimiento, telefono, email, direccion, localidad, provincia, observaciones, estado, riesgo_baja)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          ON CONFLICT(dni_cuit) DO UPDATE SET
+            nombre = EXCLUDED.nombre,
+            fecha_nacimiento = COALESCE(EXCLUDED.fecha_nacimiento, clientes.fecha_nacimiento),
+            telefono = COALESCE(EXCLUDED.telefono, clientes.telefono),
+            email = COALESCE(EXCLUDED.email, clientes.email),
+            direccion = COALESCE(EXCLUDED.direccion, clientes.direccion),
+            localidad = COALESCE(EXCLUDED.localidad, clientes.localidad),
+            provincia = COALESCE(EXCLUDED.provincia, clientes.provincia),
+            observaciones = COALESCE(EXCLUDED.observaciones, clientes.observaciones)
+        `, [
+          nombre,
+          dni_cuit,
+          fecha_nacimiento ? String(fecha_nacimiento) : null,
+          telefono ? String(telefono) : null,
+          email ? String(email) : null,
+          direccion ? String(direccion) : null,
+          localidad ? String(localidad) : null,
+          provincia ? String(provincia) : null,
+          observaciones ? String(observaciones) : null,
+          'activo',
+          0
+        ]);
+
+        if (existe.rows.length > 0) {
+          actualizados++;
+        } else {
+          insertados++;
+        }
       }
 
-      dni_cuit = String(dni_cuit).trim();
-
-      // Omitir filas con CUITs/DNIs de formato inválido en importación
-      if (!validateDniOrCuit(dni_cuit)) {
-        omitidos++;
-        continue;
-      }
-
-      const fecha_nacimiento = row['Fecha de Nacimiento'] || row['Fecha Nacimiento'] || row['fecha_nacimiento'] || null;
-      const telefono = row['Teléfono'] || row['Telefono'] || row['telefono'] || row['Tel'] || row['tel'] || null;
-      const email = row['Email'] || row['email'] || row['Correo'] || row['correo'] || null;
-      const direccion = row['Dirección'] || row['Direccion'] || row['direccion'] || null;
-      const localidad = row['Localidad'] || row['localidad'] || row['Ciudad'] || row['ciudad'] || null;
-      const provincia = row['Provincia'] || row['provincia'] || null;
-      const observaciones = row['Observaciones'] || row['observaciones'] || row['Notas'] || row['notas'] || null;
-
-      const existe = await db.get('SELECT id FROM clientes WHERE dni_cuit = ?', [dni_cuit]);
-
-      const query = `
-        INSERT INTO clientes (nombre, dni_cuit, fecha_nacimiento, telefono, email, direccion, localidad, provincia, observaciones, estado, riesgo_baja)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'activo', 0)
-        ON CONFLICT(dni_cuit) DO UPDATE SET
-          nombre = excluded.nombre,
-          fecha_nacimiento = COALESCE(excluded.fecha_nacimiento, clientes.fecha_nacimiento),
-          telefono = COALESCE(excluded.telefono, clientes.telefono),
-          email = COALESCE(excluded.email, clientes.email),
-          direccion = COALESCE(excluded.direccion, clientes.direccion),
-          localidad = COALESCE(excluded.localidad, clientes.localidad),
-          provincia = COALESCE(excluded.provincia, clientes.provincia),
-          observaciones = COALESCE(excluded.observaciones, clientes.observaciones)
-      `;
-
-      await db.run(query, [
-        nombre,
-        dni_cuit,
-        fecha_nacimiento ? String(fecha_nacimiento) : null,
-        telefono ? String(telefono) : null,
-        email ? String(email) : null,
-        direccion ? String(direccion) : null,
-        localidad ? String(localidad) : null,
-        provincia ? String(provincia) : null,
-        observaciones ? String(observaciones) : null
-      ]);
-
-      if (existe) {
-        actualizados++;
-      } else {
-        insertados++;
-      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
     }
 
     res.json({

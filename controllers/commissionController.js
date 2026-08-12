@@ -66,8 +66,52 @@ async function updateCommission(req, res, next) {
   }
 }
 
+// Obtener tasas de comisión configuradas
+async function getCommissionRates(req, res, next) {
+  try {
+    const rates = await db.all('SELECT * FROM tasas_comision ORDER BY compania ASC');
+    res.json(rates);
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Crear o actualizar tasa de comisión
+async function upsertCommissionRate(req, res, next) {
+  const { compania, tipo_cobertura, tasa, descripcion, activa } = req.body;
+  if (!compania || tasa === undefined) {
+    const error = new Error('Compañía y tasa son requeridas.');
+    error.status = 400;
+    return next(error);
+  }
+
+  try {
+    const query = `
+      INSERT INTO tasas_comision (compania, tipo_cobertura, tasa, descripcion, activa)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT (compania, tipo_cobertura) DO UPDATE SET
+        tasa = EXCLUDED.tasa,
+        descripcion = COALESCE(EXCLUDED.descripcion, tasas_comision.descripcion),
+        activa = EXCLUDED.activa
+    `;
+    await db.run(query, [
+      compania,
+      tipo_cobertura || '*',
+      parseFloat(tasa),
+      descripcion || null,
+      activa !== undefined ? Boolean(activa) : true
+    ]);
+
+    res.json({ message: 'Tasa de comisión guardada con éxito' });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   createCrmLog,
   getCommissions,
-  updateCommission
+  updateCommission,
+  getCommissionRates,
+  upsertCommissionRate
 };

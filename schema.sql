@@ -1,4 +1,4 @@
-﻿-- =============================================================
+-- =============================================================
 -- GPG SEGUROS - Schema PostgreSQL 18
 -- =============================================================
 
@@ -146,6 +146,18 @@ CREATE TABLE IF NOT EXISTS catalogo_vehiculos (
     modelo  TEXT NOT NULL,
     version TEXT NOT NULL,
     UNIQUE (marca, modelo, version)
+);
+
+-- 12. TASAS DE COMISION POR COMPAÑIA Y COBERTURA
+CREATE TABLE IF NOT EXISTS tasas_comision (
+    id             SERIAL PRIMARY KEY,
+    compania       TEXT NOT NULL,
+    tipo_cobertura TEXT NOT NULL DEFAULT '*',
+    tasa           NUMERIC(5,4) NOT NULL DEFAULT 0.1500,
+    descripcion    TEXT,
+    activa         BOOLEAN NOT NULL DEFAULT TRUE,
+    creado_en      TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (compania, tipo_cobertura)
 );
 
 -- INDICES

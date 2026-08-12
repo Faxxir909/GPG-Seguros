@@ -1,4 +1,4 @@
-﻿// =========================================================================
+// =========================================================================
 // comisiones.js
 // =========================================================================
 let allCommissions = [];
@@ -41,7 +41,68 @@ function filterCommissions() {
   renderCommissions(allCommissions.filter(c => (period===''||c.periodo===period) && (company===''||c.compania===company)));
 }
 
+async function loadCommissionRates() {
+  const tbody = document.getElementById('tasas-table-body');
+  if (!tbody) return;
+  try {
+    const rates = await apiFetch('/api/commission-rates');
+    if (!rates.length) {
+      tbody.innerHTML = '<tr><td colspan="4" class="text-center py-3 text-muted">No hay tasas configuradas.</td></tr>';
+      return;
+    }
+    let html = '';
+    rates.forEach(r => {
+      const pct = (parseFloat(r.tasa) * 100).toFixed(1);
+      html += `
+        <tr>
+          <td><strong>${r.compania}</strong></td>
+          <td><code>${r.tipo_cobertura || '*'}</code></td>
+          <td class="fw-bold text-success">${pct}%</td>
+          <td><span class="badge bg-success">Activa</span></td>
+        </tr>`;
+    });
+    tbody.innerHTML = html;
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="4" class="text-center text-danger py-3">Error: ${err.message}</td></tr>`;
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('filter-com-period')?.addEventListener('change', filterCommissions);
   document.getElementById('filter-com-company')?.addEventListener('change', filterCommissions);
+
+  document.getElementById('btn-manage-rates')?.addEventListener('click', () => {
+    loadCommissionRates();
+    new bootstrap.Modal(document.getElementById('modalTasasComision')).show();
+  });
+
+  document.getElementById('formTasaComision')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const company = document.getElementById('rate-company').value.trim();
+    const coverage = document.getElementById('rate-coverage').value.trim() || '*';
+    const percent = parseFloat(document.getElementById('rate-percent').value);
+
+    if (!company || isNaN(percent) || percent < 0 || percent > 100) {
+      showToast('Por favor complete una compañía y porcentaje válido (0 a 100).', 'warning');
+      return;
+    }
+
+    try {
+      await apiFetch('/api/commission-rates', {
+        method: 'POST',
+        body: {
+          compania: company,
+          tipo_cobertura: coverage,
+          tasa: percent / 100,
+          activa: true
+        }
+      });
+      showToast(`Tasa para ${company} guardada con éxito (${percent}%).`, 'success');
+      document.getElementById('formTasaComision').reset();
+      document.getElementById('rate-coverage').value = '*';
+      loadCommissionRates();
+    } catch (err) {
+      showToast(err.message, 'danger');
+    }
+  });
 });

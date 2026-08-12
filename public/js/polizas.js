@@ -29,19 +29,16 @@ function renderPoliciesPage() {
     tbodyId: 'policies-table-body', renderFn: renderPolicies,
     wrapId: 'policies-pagination-wrap', infoId: 'policies-pagination-info', navId: 'policies-pagination'
   });
-
-  const nav = document.getElementById('policies-pagination');
-  nav.addEventListener('pagechange', () => { policiesPage = parseInt(nav.dataset.page); renderPoliciesPage(); }, { once: true });
 }
 
 function renderPolicies(policies) {
   const tbody = document.getElementById('policies-table-body');
-  tbody.innerHTML = '';
   if (policies.length === 0) { tbody.innerHTML = `<tr><td colspan="9" class="text-center py-4">No se encontraron pólizas.</td></tr>`; return; }
+  let html = '';
   policies.forEach(p => {
     const vDesc = p.marca ? `${p.marca} ${p.modelo} <span class="small font-monospace bg-light p-1">(${p.patente})</span>` : 'Sin vehículo';
     const renLabel = p.numero_renovacion > 0 ? ` <span class="badge bg-info text-dark" style="font-size:10px;">Ren. ${p.numero_renovacion}</span>` : '';
-    tbody.innerHTML += `
+    html += `
       <tr>
         <td><strong>${p.numero_poliza || 'PENDIENTE'}</strong>${renLabel}</td>
         <td>${p.cliente_nombre}</td>
@@ -54,6 +51,7 @@ function renderPolicies(policies) {
         <td>${p.estado === 'vencida' ? `<button class="btn btn-sm btn-success py-1" onclick="quickRenewPolicy(${p.id})"><i class="fa-solid fa-rotate"></i></button>` : ''}</td>
       </tr>`;
   });
+  tbody.innerHTML = html;
 }
 
 function filterPolicies() { policiesPage = 1; renderPoliciesPage(); }
@@ -75,9 +73,15 @@ async function deletePolicy(policyId) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('search-policy')?.addEventListener('keyup', filterPolicies);
+  document.getElementById('search-policy')?.addEventListener('input', debounce(filterPolicies, 350));
   document.getElementById('filter-policy-status')?.addEventListener('change', filterPolicies);
   document.getElementById('filter-policy-company')?.addEventListener('change', filterPolicies);
+
+  // Escuchador de paginación estable
+  document.getElementById('policies-pagination')?.addEventListener('pagechange', (e) => {
+    policiesPage = parseInt(e.currentTarget.dataset.page || 1);
+    renderPoliciesPage();
+  });
 
   // Mostrar/ocultar campo nuevo número en renovación
   document.addEventListener('change', (e) => {

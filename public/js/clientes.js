@@ -72,6 +72,47 @@ function setProvinceAndCity(provVal, cityVal) {
 }
 
 // ─── LISTADO DE CLIENTES ───────────────────────────────────────────────────
+// Estado de carga de pestañas de la ficha de cliente
+let tabLoadedStates = {
+  'tab-vehicles': false,
+  'tab-policies': false,
+  'tab-siniestros': false,
+  'tab-history': false,
+  'tab-docs': false
+};
+
+function resetTabLoadedStates() {
+  for (let key in tabLoadedStates) {
+    tabLoadedStates[key] = false;
+  }
+}
+
+async function loadTabContent(tabId) {
+  if (!activeClientId) return;
+  try {
+    switch (tabId) {
+      case 'tab-vehicles':
+        await loadClientVehicles();
+        break;
+      case 'tab-policies':
+        await loadClientPolicies();
+        break;
+      case 'tab-siniestros':
+        await loadClientClaims();
+        break;
+      case 'tab-history':
+        await loadClientHistory();
+        break;
+      case 'tab-docs':
+        await loadClientDocs();
+        break;
+    }
+  } catch (err) {
+    console.error(`Error al cargar pestaña ${tabId}:`, err);
+  }
+}
+
+// ─── LISTADO DE CLIENTES ───────────────────────────────────────────────────
 let allClients = [];
 
 async function loadClientsList() {
@@ -88,18 +129,16 @@ function renderClientsPage() {
   ) : allClients;
 
   clientsPage = paginate({ items: filtered, page: clientsPage, pageSize: PAGE_SIZE, tbodyId: 'clients-table-body', renderFn: renderClients, wrapId: 'clients-pagination-wrap', infoId: 'clients-pagination-info', navId: 'clients-pagination' });
-  const nav = document.getElementById('clients-pagination');
-  nav.addEventListener('pagechange', () => { clientsPage = parseInt(nav.dataset.page); renderClientsPage(); }, { once: true });
 }
 
 function renderClients(clients) {
   const tbody = document.getElementById('clients-table-body');
-  tbody.innerHTML = '';
   if (clients.length === 0) { tbody.innerHTML = `<tr><td colspan="7" class="text-center py-4">No se encontraron clientes.</td></tr>`; return; }
+  let html = '';
   clients.forEach(c => {
     const riskBadge = c.riesgo_baja === 1 ? `<span class="badge bg-danger">Riesgo Alto</span>` : `<span class="badge bg-secondary">Normal</span>`;
     const statusClass = c.estado === 'activo' ? 'text-success' : 'text-danger';
-    tbody.innerHTML += `
+    html += `
       <tr>
         <td><strong>${c.nombre}</strong> <span class="small ${statusClass}">(${c.estado})</span></td>
         <td>${c.dni_cuit}</td><td>${c.telefono || '--'}</td><td>${c.email || '--'}</td><td>${c.localidad || '--'}</td>
@@ -107,12 +146,27 @@ function renderClients(clients) {
         <td><button class="btn btn-sm btn-premium" onclick="openClientDetail(${c.id})"><i class="fa-solid fa-folder-open me-1"></i> Ficha</button></td>
       </tr>`;
   });
+  tbody.innerHTML = html;
 }
 
 // ─── FICHA CLIENTE ─────────────────────────────────────────────────────────
 async function openClientDetail(clientId) {
   activeClientId = clientId;
   try {
+    // Forzar pestaña activa a Datos Personales (tab-info)
+    const firstTabEl = document.getElementById('info-tab');
+    if (firstTabEl) {
+      bootstrap.Tab.getOrCreateInstance(firstTabEl).show();
+    }
+
+    // Resetear estados de carga y mostrar skeletons
+    resetTabLoadedStates();
+    showTableSkeleton('detail-vehicles-body', 6);
+    showTableSkeleton('detail-policies-body', 7);
+    showTableSkeleton('detail-claims-body', 6);
+    showTimelineSkeleton('detail-timeline-body');
+    showTableSkeleton('detail-docs-body', 4);
+
     const client = await apiFetch(`/api/clients/${clientId}`);
     document.getElementById('detail-client-name').innerText = client.nombre;
     document.getElementById('detail-client-doc').innerText = `CUIT/DNI: ${client.dni_cuit}`;
@@ -124,7 +178,7 @@ async function openClientDetail(clientId) {
     document.getElementById('detail-client-city').innerText     = client.localidad || '--';
     document.getElementById('detail-client-province').innerText = client.provincia || '--';
     document.getElementById('detail-client-notes').innerText    = client.observaciones || '--';
-    loadClientVehicles(); loadClientPolicies(); loadClientClaims(); loadClientHistory(); loadClientDocs();
+
     document.getElementById('clients-list-view').classList.add('d-none');
     document.getElementById('client-detail-view').classList.remove('d-none');
   } catch (err) { showToast('Error al abrir la ficha: ' + err.message, 'danger'); }
@@ -132,12 +186,13 @@ async function openClientDetail(clientId) {
 
 // ─── SUB-TAB: VEHÍCULOS ────────────────────────────────────────────────────
 async function loadClientVehicles() {
+  tabLoadedStates['tab-vehicles'] = true;
   const vehicles = await apiFetch(`/api/clients/${activeClientId}/vehicles`);
   const tbody = document.getElementById('detail-vehicles-body');
-  tbody.innerHTML = '';
   if (vehicles.length === 0) { tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted">No hay vehículos vinculados.</td></tr>`; return; }
+  let html = '';
   vehicles.forEach(v => {
-    tbody.innerHTML += `
+    html += `
       <tr>
         <td><strong>${v.marca} ${v.modelo}</strong> <span class="small text-muted d-block">${v.version || ''}</span></td>
         <td>${v.anio || '--'}</td>
@@ -147,6 +202,7 @@ async function loadClientVehicles() {
         <td><button class="btn btn-sm btn-link text-danger" onclick="deleteVehicle(${v.id})"><i class="fa-solid fa-trash"></i></button></td>
       </tr>`;
   });
+  tbody.innerHTML = html;
 }
 
 async function deleteVehicle(id) {
@@ -166,20 +222,23 @@ async function inicializarMarcas() {
   selectVersion.innerHTML = '<option value="">Seleccione Versión</option>'; selectVersion.disabled = true;
   try {
     const brands = await apiFetch('/api/brands');
-    brands.forEach(marca => { selectMarca.innerHTML += `<option value="${marca}">${marca}</option>`; });
+    let html = '<option value="">Seleccione Marca</option>';
+    brands.forEach(marca => { html += `<option value="${marca}">${marca}</option>`; });
+    selectMarca.innerHTML = html;
   } catch (err) { console.error('Error al inicializar marcas:', err); }
 }
 
 // ─── SUB-TAB: PÓLIZAS DEL CLIENTE ─────────────────────────────────────────
 async function loadClientPolicies() {
+  tabLoadedStates['tab-policies'] = true;
   const policies = await apiFetch(`/api/clients/${activeClientId}/policies`);
   const tbody = document.getElementById('detail-policies-body');
-  tbody.innerHTML = '';
   if (policies.length === 0) { tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted">No hay pólizas emitidas.</td></tr>`; return; }
+  let html = '';
   policies.forEach(p => {
     const vDesc = p.marca ? `${p.marca} ${p.modelo} (${p.patente})` : 'Sin vehículo';
     const renLabel = p.numero_renovacion > 0 ? ` <span class="badge bg-info text-dark" style="font-size:10px;">Ren. ${p.numero_renovacion}</span>` : '';
-    tbody.innerHTML += `
+    html += `
       <tr>
         <td><strong>${p.numero_poliza || 'PENDIENTE'}</strong>${renLabel}</td>
         <td>${p.compania}</td>
@@ -195,17 +254,18 @@ async function loadClientPolicies() {
         </td>
       </tr>`;
   });
+  tbody.innerHTML = html;
 }
 
 // ─── SUB-TAB: SINIESTROS DEL CLIENTE ──────────────────────────────────────
 async function loadClientClaims() {
-  const claims = await apiFetch('/api/claims');
-  const filtered = claims.filter(s => s.cliente_id === activeClientId);
+  tabLoadedStates['tab-siniestros'] = true;
+  const filtered = await apiFetch(`/api/clients/${activeClientId}/claims`);
   const tbody = document.getElementById('detail-claims-body');
-  tbody.innerHTML = '';
   if (filtered.length === 0) { tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted">No hay siniestros reportados.</td></tr>`; return; }
+  let html = '';
   filtered.forEach(s => {
-    tbody.innerHTML += `
+    html += `
       <tr>
         <td><strong>${s.numero_siniestro}</strong></td>
         <td><span class="badge bg-secondary font-monospace">${s.patente || '--'}</span></td>
@@ -214,6 +274,7 @@ async function loadClientClaims() {
         <td><button class="btn btn-sm btn-link text-danger" onclick="deleteClaim(${s.id})"><i class="fa-solid fa-trash"></i></button></td>
       </tr>`;
   });
+  tbody.innerHTML = html;
 }
 
 async function deleteClaim(id) {
@@ -226,30 +287,33 @@ async function deleteClaim(id) {
 
 // ─── SUB-TAB: HISTORIAL CRM ────────────────────────────────────────────────
 async function loadClientHistory() {
+  tabLoadedStates['tab-history'] = true;
   const history = await apiFetch(`/api/clients/${activeClientId}/history`);
   const container = document.getElementById('detail-timeline-body');
-  container.innerHTML = '';
   if (history.length === 0) { container.innerHTML = `<p class="text-muted text-center py-3">No hay historial de contactos registrado.</p>`; return; }
   const icons = { whatsapp: 'fa-brands fa-whatsapp whatsapp', llamada: 'fa-solid fa-phone llamada', email: 'fa-solid fa-envelope email', nota: 'fa-solid fa-pen-clip nota' };
+  let html = '';
   history.forEach(log => {
     const iconClass = icons[log.tipo_contacto] || 'fa-solid fa-circle';
-    container.innerHTML += `
+    html += `
       <div class="timeline-item">
         <div class="timeline-icon ${log.tipo_contacto}"><i class="${iconClass.split(' ')[0]} ${iconClass.split(' ')[1]}"></i></div>
         <div class="timeline-date">${new Date(log.fecha_creacion).toLocaleString()}</div>
         <div class="timeline-content"><strong>${log.tipo_contacto.toUpperCase()}:</strong> ${log.descripcion}</div>
       </div>`;
   });
+  container.innerHTML = html;
 }
 
 // ─── SUB-TAB: DOCUMENTOS ──────────────────────────────────────────────────
 async function loadClientDocs() {
+  tabLoadedStates['tab-docs'] = true;
   const docs = await apiFetch(`/api/clients/${activeClientId}/attachments`);
   const tbody = document.getElementById('detail-docs-body');
-  tbody.innerHTML = '';
   if (docs.length === 0) { tbody.innerHTML = `<tr><td colspan="4" class="text-center text-muted">No hay documentos cargados.</td></tr>`; return; }
+  let html = '';
   docs.forEach(doc => {
-    tbody.innerHTML += `
+    html += `
       <tr>
         <td><strong>${doc.nombre_archivo}</strong></td>
         <td><span class="badge bg-secondary">${doc.tipo_documento.toUpperCase()}</span></td>
@@ -257,12 +321,30 @@ async function loadClientDocs() {
         <td><a href="${doc.ruta_archivo}" target="_blank" class="btn btn-sm btn-outline-primary"><i class="fa-solid fa-eye"></i> Ver</a></td>
       </tr>`;
   });
+  tbody.innerHTML = html;
 }
 
 // ─── INICIALIZACIÓN DE EVENT LISTENERS ────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-  // Búsqueda en tiempo real
-  document.getElementById('search-client')?.addEventListener('keyup', () => { clientsPage = 1; renderClientsPage(); });
+  // Búsqueda en tiempo real con debounce
+  document.getElementById('search-client')?.addEventListener('input', debounce(() => { clientsPage = 1; renderClientsPage(); }, 350));
+
+  // Escuchador de paginación estable
+  document.getElementById('clients-pagination')?.addEventListener('pagechange', (e) => {
+    clientsPage = parseInt(e.currentTarget.dataset.page || 1);
+    renderClientsPage();
+  });
+
+  // Escuchadores de Bootstrap tabs para carga perezosa (lazy-loading)
+  const tabElList = document.querySelectorAll('#clientTabs button[data-bs-toggle="tab"]');
+  tabElList.forEach(tabEl => {
+    tabEl.addEventListener('shown.bs.tab', (event) => {
+      const targetId = event.target.getAttribute('data-bs-target')?.replace('#', '');
+      if (targetId && targetId in tabLoadedStates && !tabLoadedStates[targetId]) {
+        loadTabContent(targetId);
+      }
+    });
+  });
 
   // Volver al listado
   document.getElementById('btn-back-to-clients')?.addEventListener('click', () => {
