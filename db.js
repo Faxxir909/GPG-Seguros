@@ -1,10 +1,8 @@
 require('dotenv').config();
-const { Pool } = require('pg');
+const fs = require('fs');
+const path = require('path');
 const bcrypt = require('bcryptjs');
 
-// ─────────────────────────────────────────────
-// Pool de conexiones a PostgreSQL
-// ─────────────────────────────────────────────
 const dbUrl = process.env.DATABASE_URL || 
               process.env.INTERNAL_DATABASE_URL || 
               process.env.EXTERNAL_DATABASE_URL || 
@@ -12,157 +10,291 @@ const dbUrl = process.env.DATABASE_URL ||
               process.env.POSTGRESQL_URL;
 
 const pgHost = process.env.PGHOST || process.env.PG_HOST;
+const isPgEnv = Boolean(dbUrl || (pgHost && pgHost !== 'localhost' && pgHost !== '127.0.0.1'));
 
-const poolConfig = {
-  max: 10,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000,
-};
+let isPg = false;
+let pool = null;
+let sqliteDb = null;
 
-if (dbUrl) {
-  console.log('[DB Config]: Usando URL de conexión PostgreSQL remota (DATABASE_URL)');
-  poolConfig.connectionString = dbUrl;
-  poolConfig.ssl = { rejectUnauthorized: false };
-} else if (pgHost && pgHost !== 'localhost' && pgHost !== '127.0.0.1') {
-  console.log(`[DB Config]: Usando host remoto PostgreSQL (${pgHost})`);
-  poolConfig.host = pgHost;
-  poolConfig.port = parseInt(process.env.PGPORT || process.env.PG_PORT || '5432');
-  poolConfig.user = process.env.PGUSER || process.env.PG_USER || 'postgres';
-  poolConfig.password = process.env.PGPASSWORD || process.env.PG_PASSWORD || '';
-  poolConfig.database = process.env.PGDATABASE || process.env.PG_DATABASE || 'gpg_seguros';
-  poolConfig.ssl = { rejectUnauthorized: false };
-} else {
-  console.log('⚠️ [DB Config Warning]: No se encontró DATABASE_URL. Usando fallback localhost:5432 (Configure DATABASE_URL en el Dashboard de Render -> Environment).');
-  poolConfig.host = process.env.PG_HOST || 'localhost';
-  poolConfig.port = parseInt(process.env.PG_PORT || '5432');
-  poolConfig.user = process.env.PG_USER || 'postgres';
-  poolConfig.password = process.env.PG_PASSWORD || 'admin1234';
-  poolConfig.database = process.env.PG_DATABASE || 'gpg_seguros';
+if (isPgEnv) {
+  const { Pool } = require('pg');
+  const poolConfig = { max: 10, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 };
+  if (dbUrl) {
+    poolConfig.connectionString = dbUrl;
+    poolConfig.ssl = { rejectUnauthorized: false };
+  } else {
+    poolConfig.host = pgHost;
+    poolConfig.port = parseInt(process.env.PGPORT || process.env.PG_PORT || '5432');
+    poolConfig.user = process.env.PGUSER || process.env.PG_USER || 'postgres';
+    poolConfig.password = process.env.PGPASSWORD || process.env.PG_PASSWORD || '';
+    poolConfig.database = process.env.PGDATABASE || process.env.PG_DATABASE || 'gpg_seguros';
+    poolConfig.ssl = { rejectUnauthorized: false };
+  }
+  pool = new Pool(poolConfig);
+  pool.on('error', (err) => console.error('PostgreSQL pool error:', err));
 }
 
-const pool = new Pool(poolConfig);
-
-pool.on('error', (err) => {
-  console.error('PostgreSQL pool error:', err);
-});
-
-// ─────────────────────────────────────────────
-// Convertir placeholders ? de SQLite → $1,$2... de PostgreSQL
-// Esto permite que todos los controllers sigan funcionando sin cambios
-// ─────────────────────────────────────────────
 function convertPlaceholders(sql) {
   let i = 0;
   return sql.replace(/\?/g, () => `$${++i}`);
 }
 
-// ─────────────────────────────────────────────
-// Helper: ejecutar INSERT / UPDATE / DELETE / DDL
-// Retorna { id, changes } — compatible con la API anterior de SQLite
-// ─────────────────────────────────────────────
 async function run(sql, params = []) {
-  const query = convertPlaceholders(sql);
-  const isInsert = /^\s*INSERT/i.test(sql);
+  if (isPg) {
+    const query = convertPlaceholders(sql);
+    const isInsert = /^\s*INSERT/i.test(sql);
+    if (isInsert && !/RETURNING/i.test(sql)) {
+      const result = await pool.query(query + ' RETURNING id', params);
+      return { id: result.rows[0]?.id ?? 0, changes: result.rowCount ?? 0 };
+    }
+    const result = await pool.query(query, params);
+    return { id: 0, changes: result.rowCount ?? 0 };
+  } else {
+    return new Promise((resolve, reject) => {
+      // Reemplazar sintaxis RETURNING o EXCLUDED de Postgres si se usa en SQLite
+      let cleanSql = sql
+        .replace(/EXCLUDED\./gi, 'excluded.')
+        .replace(/RETURNING\s+id/gi, '');
 
-  // Para INSERT: agrega RETURNING id si no lo tiene ya
-  if (isInsert && !/RETURNING/i.test(sql)) {
-    const queryWithReturning = query + ' RETURNING id';
-    const result = await pool.query(queryWithReturning, params);
-    return {
-      id:      result.rows[0]?.id ?? 0,
-      changes: result.rowCount ?? 0,
-    };
+      sqliteDb.run(cleanSql, params, function(err) {
+        if (err) return reject(err);
+        resolve({ id: this.lastID, changes: this.changes });
+      });
+    });
   }
-
-  const result = await pool.query(query, params);
-  return {
-    id:      0,
-    changes: result.rowCount ?? 0,
-  };
 }
 
-// ─────────────────────────────────────────────
-// Helper: obtener una sola fila (o undefined)
-// ─────────────────────────────────────────────
 async function get(sql, params = []) {
-  const query = convertPlaceholders(sql);
-  const result = await pool.query(query, params);
-  return result.rows[0];
-}
-
-// ─────────────────────────────────────────────
-// Helper: obtener múltiples filas
-// ─────────────────────────────────────────────
-async function all(sql, params = []) {
-  const query = convertPlaceholders(sql);
-  const result = await pool.query(query, params);
-  return result.rows;
-}
-
-const fs = require('fs');
-const path = require('path');
-
-// ─────────────────────────────────────────────
-// Inicialización: verifica conexión y carga datos semilla
-// ─────────────────────────────────────────────
-async function initDatabase() {
-  try {
-    const client = await pool.connect();
-    console.log('Conectado a PostgreSQL:', client.database);
-    client.release();
-
-    // 1. Ejecutar schema.sql para garantizar que todas las tablas existan
-    const schemaPath = path.join(__dirname, 'schema.sql');
-    if (fs.existsSync(schemaPath)) {
-      const schemaSql = fs.readFileSync(schemaPath, 'utf8');
-      try {
-        await pool.query(schemaSql);
-        console.log('Schema verificado/aplicado en PostgreSQL.');
-      } catch (schemaErr) {
-        console.error('[Schema SQL Warning]:', schemaErr.message || schemaErr);
-      }
-    }
-
-    // 2. Verificar si ya existen usuarios; si no, cargar datos semilla
-    const userCount = await get('SELECT COUNT(*) AS count FROM usuarios');
-    if (parseInt(userCount.count) === 0) {
-      await seedDatabase();
-    } else {
-      // Solo cargar catálogo de vehículos si está vacío (evitar DELETE + re-insert en cada inicio)
-      const catalogCount = await get('SELECT COUNT(*) AS count FROM catalogo_vehiculos');
-      if (parseInt(catalogCount.count) === 0) {
-        await seedCatalogo();
-      } else {
-        console.log('Catálogo de vehículos ya cargado (%d registros). Saltando recarga.', parseInt(catalogCount.count));
-      }
-    }
-
-    // 3. Verificar e inicializar tasas de comisión si no existen
-    await seedTasasComision();
-
-    console.log('Base de datos inicializada correctamente.');
-  } catch (error) {
-    console.error('Error al inicializar la base de datos:', error.message);
-    throw error;
+  if (isPg) {
+    const query = convertPlaceholders(sql);
+    const result = await pool.query(query, params);
+    return result.rows[0];
+  } else {
+    return new Promise((resolve, reject) => {
+      sqliteDb.get(sql, params, (err, row) => {
+        if (err) return reject(err);
+        resolve(row);
+      });
+    });
   }
+}
+
+async function all(sql, params = []) {
+  if (isPg) {
+    const query = convertPlaceholders(sql);
+    const result = await pool.query(query, params);
+    return result.rows;
+  } else {
+    return new Promise((resolve, reject) => {
+      sqliteDb.all(sql, params, (err, rows) => {
+        if (err) return reject(err);
+        resolve(rows || []);
+      });
+    });
+  }
+}
+
+async function initDatabase() {
+  if (isPgEnv) {
+    try {
+      const client = await pool.connect();
+      console.log('[DB Engine]: PostgreSQL conectado a:', client.database);
+      client.release();
+      isPg = true;
+
+      const schemaPath = path.join(__dirname, 'schema.sql');
+      if (fs.existsSync(schemaPath)) {
+        const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+        try {
+          await pool.query(schemaSql);
+          console.log('Schema PostgreSQL verificado.');
+        } catch (schemaErr) {
+          console.error('[Schema Warning]:', schemaErr.message);
+        }
+      }
+
+      const userCount = await get('SELECT COUNT(*) AS count FROM usuarios');
+      if (parseInt(userCount.count) === 0) {
+        await seedDatabase();
+      } else {
+        const catalogCount = await get('SELECT COUNT(*) AS count FROM catalogo_vehiculos');
+        if (parseInt(catalogCount.count) === 0) {
+          await seedCatalogo();
+        }
+      }
+      await seedTasasComision();
+      console.log('Base de datos PostgreSQL lista.');
+      return;
+    } catch (err) {
+      console.warn('[DB Fallback]: No se pudo conectar a PostgreSQL (', err.message, '). Cambiando a SQLite...');
+      isPg = false;
+    }
+  }
+
+  // Fallback SQLite
+  console.log('[DB Engine]: Inicializando SQLite (gpg_seguros.db)');
+  const sqlite3 = require('sqlite3').verbose();
+  const dbPath = path.join(__dirname, 'gpg_seguros.db');
+  sqliteDb = new sqlite3.Database(dbPath);
+
+  await initSqliteTables();
+  const userCount = await get('SELECT COUNT(*) AS count FROM usuarios');
+  if (!userCount || parseInt(userCount.count) === 0) {
+    await seedDatabase();
+  }
+  const catalogCount = await get('SELECT COUNT(*) AS count FROM catalogo_vehiculos');
+  if (!catalogCount || parseInt(catalogCount.count) === 0) {
+    await seedCatalogo();
+  }
+  await seedTasasComision();
+  console.log('Base de datos SQLite lista.');
+}
+
+async function initSqliteTables() {
+  const ddl = `
+    CREATE TABLE IF NOT EXISTS usuarios (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        usuario    TEXT UNIQUE NOT NULL,
+        password   TEXT NOT NULL,
+        rol        TEXT NOT NULL CHECK (rol IN ('admin', 'productor', 'administrativo')),
+        nombre     TEXT NOT NULL,
+        creado_en  DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS clientes (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        nombre           TEXT NOT NULL,
+        dni_cuit         TEXT UNIQUE NOT NULL,
+        fecha_nacimiento DATE,
+        telefono         TEXT,
+        email            TEXT,
+        direccion        TEXT,
+        localidad        TEXT,
+        provincia        TEXT,
+        observaciones    TEXT,
+        estado           TEXT NOT NULL DEFAULT 'activo',
+        riesgo_baja      BOOLEAN NOT NULL DEFAULT 0,
+        creado_en        DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS vehiculos (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        cliente_id INTEGER NOT NULL,
+        marca      TEXT NOT NULL,
+        modelo     TEXT NOT NULL,
+        version    TEXT,
+        anio       INTEGER,
+        patente    TEXT,
+        chasis     TEXT,
+        motor      TEXT,
+        uso        TEXT DEFAULT 'particular',
+        creado_en  DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS polizas (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        numero_poliza     TEXT NOT NULL,
+        numero_renovacion INTEGER NOT NULL DEFAULT 0,
+        fecha_inicio      DATE NOT NULL,
+        fecha_vencimiento DATE NOT NULL,
+        cobertura         TEXT NOT NULL,
+        estado            TEXT NOT NULL DEFAULT 'vigente',
+        monto_total       REAL NOT NULL,
+        valor_cuota       REAL NOT NULL,
+        forma_pago        TEXT NOT NULL DEFAULT 'efectivo',
+        compania          TEXT NOT NULL,
+        cliente_id        INTEGER NOT NULL,
+        vehiculo_id       INTEGER,
+        creado_en         DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS cotizaciones (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        cliente_id     INTEGER NOT NULL,
+        vehiculo_id    INTEGER,
+        compania       TEXT NOT NULL,
+        cobertura      TEXT NOT NULL,
+        monto_total    REAL NOT NULL,
+        valor_cuota    REAL NOT NULL,
+        estado         TEXT NOT NULL DEFAULT 'pendiente',
+        fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS siniestros (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        numero_siniestro TEXT UNIQUE,
+        cliente_id       INTEGER NOT NULL,
+        vehiculo_id      INTEGER,
+        poliza_id        INTEGER,
+        fecha            DATE NOT NULL,
+        descripcion      TEXT NOT NULL,
+        estado           TEXT NOT NULL DEFAULT 'denunciado',
+        creado_en        DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS agenda (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        cliente_id        INTEGER,
+        titulo            TEXT NOT NULL,
+        descripcion       TEXT,
+        fecha_vencimiento DATE NOT NULL,
+        tipo              TEXT NOT NULL DEFAULT 'recordatorio',
+        completado        BOOLEAN NOT NULL DEFAULT 0,
+        creado_en         DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS crm_logs (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        cliente_id     INTEGER NOT NULL,
+        tipo_contacto  TEXT NOT NULL DEFAULT 'nota',
+        descripcion    TEXT NOT NULL,
+        fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS comisiones (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        poliza_id      INTEGER NOT NULL,
+        compania       TEXT NOT NULL,
+        monto_poliza   REAL NOT NULL,
+        tasa_comision  REAL NOT NULL,
+        monto_comision REAL NOT NULL,
+        estado_pago    TEXT NOT NULL DEFAULT 'pendiente',
+        periodo        TEXT NOT NULL,
+        creado_en      DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS adjuntos (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        cliente_id     INTEGER,
+        poliza_id      INTEGER,
+        siniestro_id   INTEGER,
+        nombre_archivo TEXT NOT NULL,
+        ruta_archivo   TEXT NOT NULL,
+        tipo_documento TEXT NOT NULL DEFAULT 'pdf',
+        fecha_subida   DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS catalogo_vehiculos (
+        id      INTEGER PRIMARY KEY AUTOINCREMENT,
+        marca   TEXT NOT NULL,
+        modelo  TEXT NOT NULL,
+        version TEXT NOT NULL,
+        UNIQUE (marca, modelo, version)
+    );
+    CREATE TABLE IF NOT EXISTS tasas_comision (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        compania       TEXT NOT NULL,
+        tipo_cobertura TEXT NOT NULL DEFAULT '*',
+        tasa           REAL NOT NULL DEFAULT 0.15,
+        descripcion    TEXT,
+        activa         BOOLEAN NOT NULL DEFAULT 1,
+        creado_en      DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (compania, tipo_cobertura)
+    );
+  `;
+  return new Promise((resolve, reject) => {
+    sqliteDb.exec(ddl, (err) => {
+      if (err) return reject(err);
+      resolve();
+    });
+  });
 }
 
 async function seedTasasComision() {
   try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS tasas_comision (
-        id             SERIAL PRIMARY KEY,
-        compania       TEXT NOT NULL,
-        tipo_cobertura TEXT NOT NULL DEFAULT '*',
-        tasa           NUMERIC(5,4) NOT NULL DEFAULT 0.1500,
-        descripcion    TEXT,
-        activa         BOOLEAN NOT NULL DEFAULT TRUE,
-        creado_en      TIMESTAMPTZ DEFAULT NOW(),
-        UNIQUE (compania, tipo_cobertura)
-      )
-    `);
-    const count = await pool.query('SELECT COUNT(*) as count FROM tasas_comision');
-    if (parseInt(count.rows[0].count) === 0) {
-      await pool.query(`
+    const count = await get('SELECT COUNT(*) as count FROM tasas_comision');
+    if (!count || parseInt(count.count) === 0) {
+      const query = `
         INSERT INTO tasas_comision (compania, tipo_cobertura, tasa, descripcion) VALUES
           ('Federación Patronal', '*', 0.1500, 'Tasa genérica Federación Patronal'),
           ('Sancor Seguros', '*', 0.1500, 'Tasa genérica Sancor'),
@@ -174,28 +306,20 @@ async function seedTasasComision() {
           ('Allianz', '*', 0.1400, 'Tasa genérica Allianz'),
           ('Mercantil Andina', '*', 0.1500, 'Tasa genérica Mercantil Andina'),
           ('Berkley', '*', 0.1300, 'Tasa genérica Berkley')
-        ON CONFLICT DO NOTHING
-      `);
-      console.log('Tasas de comisión iniciales verficadas/creadas.');
+      `;
+      await run(query);
+      console.log('Tasas de comisión de ejemplo creadas.');
     }
   } catch (err) {
     console.error('Error al inicializar tasas_comision:', err.message);
   }
 }
 
-// ─────────────────────────────────────────────
-// Catálogo de vehículos
-// ─────────────────────────────────────────────
 async function seedCatalogo() {
   console.log('Cargando catálogo de vehículos...');
-
   const normalizeCatalogText = (s) => {
     if (s === null || s === undefined) return '';
-    return String(s)
-      .trim()
-      .replace(/\s+/g, ' ')
-      .toLowerCase()
-      .replace(/\b\w/g, (c) => c.toUpperCase());
+    return String(s).trim().replace(/\s+/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
   };
 
   const catalogo = {
@@ -308,62 +432,35 @@ async function seedCatalogo() {
     }
   };
 
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    for (const marca of Object.keys(catalogo)) {
-      for (const modelo of Object.keys(catalogo[marca])) {
-        for (const version of catalogo[marca][modelo]) {
-          const marcaN  = normalizeCatalogText(marca);
-          const modeloN = normalizeCatalogText(modelo);
-          const versionN = normalizeCatalogText(version);
-          await client.query(
-            'INSERT INTO catalogo_vehiculos (marca, modelo, version) VALUES ($1, $2, $3) ON CONFLICT (marca, modelo, version) DO NOTHING',
-            [marcaN, modeloN, versionN]
-          );
-        }
+  for (const marca of Object.keys(catalogo)) {
+    for (const modelo of Object.keys(catalogo[marca])) {
+      for (const version of catalogo[marca][modelo]) {
+        const marcaN  = normalizeCatalogText(marca);
+        const modeloN = normalizeCatalogText(modelo);
+        const versionN = normalizeCatalogText(version);
+        await run('INSERT INTO catalogo_vehiculos (marca, modelo, version) VALUES (?, ?, ?)', [marcaN, modeloN, versionN]);
       }
     }
-    await client.query('COMMIT');
-    console.log('Catalogo de vehiculos cargado con exito.');
-  } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('Error al cargar catalogo:', error.message);
-    throw error;
-  } finally {
-    client.release();
   }
+  console.log('Catálogo de vehículos cargado con éxito.');
 }
 
 async function seedDatabase() {
-  console.log('Iniciando carga de datos semilla...');
-  const client = await pool.connect();
+  console.log('Iniciando carga de datos semilla (usuarios)...');
+  const hashAdmin = bcrypt.hashSync('admin123', 10);
+  const hashProd  = bcrypt.hashSync('prod123', 10);
+  const hashAdm   = bcrypt.hashSync('adm123', 10);
+
   try {
-    await client.query('BEGIN');
-
-    const hashAdmin = bcrypt.hashSync('admin123', 10);
-    const hashProd  = bcrypt.hashSync('prod123', 10);
-    const hashAdm   = bcrypt.hashSync('adm123', 10);
-
-    await client.query(`
-      INSERT INTO usuarios (usuario, password, rol, nombre) VALUES
-        ('admin',          $1, 'admin',          'Administrador General'),
-        ('productor',      $2, 'productor',      'Pedro Pas (Productor)'),
-        ('administrativo', $3, 'administrativo', 'Ana Admin (Administrativa)')
-      ON CONFLICT (usuario) DO NOTHING
-    `, [hashAdmin, hashProd, hashAdm]);
-
-    await client.query('COMMIT');
-    console.log('Usuarios base inicializados con exito.');
-  } catch (err) {
-    await client.query('ROLLBACK');
-    console.error('Error al insertar usuarios base:', err.message);
-    throw err;
-  } finally {
-    client.release();
-  }
-
-  await seedCatalogo();
+    await run("INSERT INTO usuarios (usuario, password, rol, nombre) VALUES (?, ?, 'admin', 'Administrador General')", ['admin', hashAdmin]);
+  } catch {}
+  try {
+    await run("INSERT INTO usuarios (usuario, password, rol, nombre) VALUES (?, ?, 'productor', 'Pedro Pas (Productor)')", ['productor', hashProd]);
+  } catch {}
+  try {
+    await run("INSERT INTO usuarios (usuario, password, rol, nombre) VALUES (?, ?, 'administrativo', 'Ana Admin (Administrativa)')", ['administrativo', hashAdm]);
+  } catch {}
+  console.log('Usuarios base inicializados con éxito.');
 }
 
 module.exports = { pool, run, get, all, initDatabase };
