@@ -5,25 +5,39 @@ const bcrypt = require('bcryptjs');
 // ─────────────────────────────────────────────
 // Pool de conexiones a PostgreSQL
 // ─────────────────────────────────────────────
+const dbUrl = process.env.DATABASE_URL || 
+              process.env.INTERNAL_DATABASE_URL || 
+              process.env.EXTERNAL_DATABASE_URL || 
+              process.env.POSTGRES_URL || 
+              process.env.POSTGRESQL_URL;
+
+const pgHost = process.env.PGHOST || process.env.PG_HOST;
+
 const poolConfig = {
   max: 10,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000,
 };
 
-if (process.env.DATABASE_URL) {
-  poolConfig.connectionString = process.env.DATABASE_URL;
-  // Render y servicios cloud en producción requieren SSL
+if (dbUrl) {
+  console.log('[DB Config]: Usando URL de conexión PostgreSQL remota (DATABASE_URL)');
+  poolConfig.connectionString = dbUrl;
+  poolConfig.ssl = { rejectUnauthorized: false };
+} else if (pgHost && pgHost !== 'localhost' && pgHost !== '127.0.0.1') {
+  console.log(`[DB Config]: Usando host remoto PostgreSQL (${pgHost})`);
+  poolConfig.host = pgHost;
+  poolConfig.port = parseInt(process.env.PGPORT || process.env.PG_PORT || '5432');
+  poolConfig.user = process.env.PGUSER || process.env.PG_USER || 'postgres';
+  poolConfig.password = process.env.PGPASSWORD || process.env.PG_PASSWORD || '';
+  poolConfig.database = process.env.PGDATABASE || process.env.PG_DATABASE || 'gpg_seguros';
   poolConfig.ssl = { rejectUnauthorized: false };
 } else {
+  console.log('[DB Config]: Usando configuración local por defecto (localhost:5432)');
   poolConfig.host = process.env.PG_HOST || 'localhost';
   poolConfig.port = parseInt(process.env.PG_PORT || '5432');
   poolConfig.user = process.env.PG_USER || 'postgres';
   poolConfig.password = process.env.PG_PASSWORD || 'admin1234';
   poolConfig.database = process.env.PG_DATABASE || 'gpg_seguros';
-  if (process.env.PG_SSL === 'true') {
-    poolConfig.ssl = { rejectUnauthorized: false };
-  }
 }
 
 const pool = new Pool(poolConfig);
