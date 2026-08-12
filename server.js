@@ -70,11 +70,16 @@ app.use((req, res) => {
 
 // Inicializar base de datos y levantar servidor
 async function start() {
-  await db.initDatabase();
-  app.listen(PORT, () => {
+  try {
+    await db.initDatabase();
+  } catch (err) {
+    console.error('[Database Init Warning]:', err.message);
+  }
+  
+  app.listen(PORT, '0.0.0.0', () => {
     console.log(`==================================================`);
     console.log(` CRM GPG SEGUROS - Productor Asesor de Seguros (PAS)`);
-    console.log(` Servidor corriendo en: http://localhost:${PORT}`);
+    console.log(` Servidor corriendo en puerto: ${PORT}`);
     console.log(`==================================================`);
   });
 }

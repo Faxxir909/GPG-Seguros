@@ -5,18 +5,28 @@ const bcrypt = require('bcryptjs');
 // ─────────────────────────────────────────────
 // Pool de conexiones a PostgreSQL
 // ─────────────────────────────────────────────
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  // Fallback a variables individuales si no hay DATABASE_URL
-  host:     process.env.PG_HOST     || 'localhost',
-  port:     parseInt(process.env.PG_PORT || '5432'),
-  user:     process.env.PG_USER     || 'postgres',
-  password: process.env.PG_PASSWORD || 'admin1234',
-  database: process.env.PG_DATABASE || 'gpg_seguros',
+const poolConfig = {
   max: 10,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
-});
+  connectionTimeoutMillis: 10000,
+};
+
+if (process.env.DATABASE_URL) {
+  poolConfig.connectionString = process.env.DATABASE_URL;
+  // Render y servicios cloud en producción requieren SSL
+  poolConfig.ssl = { rejectUnauthorized: false };
+} else {
+  poolConfig.host = process.env.PG_HOST || 'localhost';
+  poolConfig.port = parseInt(process.env.PG_PORT || '5432');
+  poolConfig.user = process.env.PG_USER || 'postgres';
+  poolConfig.password = process.env.PG_PASSWORD || 'admin1234';
+  poolConfig.database = process.env.PG_DATABASE || 'gpg_seguros';
+  if (process.env.PG_SSL === 'true') {
+    poolConfig.ssl = { rejectUnauthorized: false };
+  }
+}
+
+const pool = new Pool(poolConfig);
 
 pool.on('error', (err) => {
   console.error('PostgreSQL pool error:', err);

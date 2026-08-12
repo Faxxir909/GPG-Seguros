@@ -1,5 +1,3 @@
-const pdfParse = require('pdf-parse');
-
 /**
  * Normaliza cadenas de texto para facilitar comparaciones
  */
@@ -15,6 +13,7 @@ function cleanText(str) {
  * @returns {Promise<Object>} Objeto estructurado con los datos extraídos
  */
 async function parsePolicyPdfBuffer(pdfBuffer) {
+  const pdfParse = require('pdf-parse');
   const data = await pdfParse(pdfBuffer);
   const rawText = data.text || '';
   
