@@ -13,9 +13,23 @@ function cleanText(str) {
  * @returns {Promise<Object>} Objeto estructurado con los datos extraídos
  */
 async function parsePolicyPdfBuffer(pdfBuffer) {
-  const pdfParse = require('pdf-parse');
-  const data = await pdfParse(pdfBuffer);
-  const rawText = data.text || '';
+  let rawText = '';
+  const pdfParseModule = require('pdf-parse');
+
+  if (typeof pdfParseModule === 'function') {
+    const data = await pdfParseModule(pdfBuffer);
+    rawText = data.text || '';
+  } else if (pdfParseModule && typeof pdfParseModule.PDFParse === 'function') {
+    const parser = new pdfParseModule.PDFParse({
+      data: new Uint8Array(pdfBuffer),
+      verbosity: 0
+    });
+    await parser.load();
+    const parsedResult = await parser.getText();
+    rawText = typeof parsedResult === 'string' ? parsedResult : (parsedResult.text || parsedResult.pages?.map(p => p.text).join('\n') || '');
+  } else {
+    throw new Error('No se pudo inicializar la librería pdf-parse.');
+  }
   
   const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
   const fullSingleLineText = lines.join(' ');

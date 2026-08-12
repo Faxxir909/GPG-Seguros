@@ -151,21 +151,27 @@ async function deletePolicy(req, res, next) {
 
 const { parsePolicyPdfBuffer } = require('../services/pdfParserService');
 
+const fs = require('fs');
+
 // Parsear PDF de póliza y extraer datos estructurados
 async function parsePolicyPdf(req, res, next) {
-  if (!req.files || (!req.files.archivo && !req.files.pdf)) {
-    const error = new Error('No se subió ningún archivo PDF.');
-    error.status = 400;
-    return next(error);
-  }
-
-  const file = req.files.archivo || req.files.pdf;
   try {
-    const extracted = await parsePolicyPdfBuffer(file.data);
+    if (!req.files || (!req.files.archivo && !req.files.pdf)) {
+      return res.status(400).json({ error: 'No se subió ningún archivo PDF.' });
+    }
+
+    const file = req.files.archivo || req.files.pdf;
+    const fileBuffer = file.data || (file.tempFilePath ? fs.readFileSync(file.tempFilePath) : null);
+
+    if (!fileBuffer || fileBuffer.length === 0) {
+      return res.status(400).json({ error: 'El archivo PDF subido está vacío.' });
+    }
+
+    const extracted = await parsePolicyPdfBuffer(fileBuffer);
     res.json({ success: true, extracted });
   } catch (err) {
-    console.error('[parsePolicyPdf Error]:', err);
-    next(new Error('Error al procesar el archivo PDF: ' + err.message));
+    console.error('[parsePolicyPdf Error]:', err.stack || err.message || err);
+    res.status(500).json({ error: 'Error al procesar el archivo PDF: ' + err.message });
   }
 }
 
