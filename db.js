@@ -32,7 +32,7 @@ if (dbUrl) {
   poolConfig.database = process.env.PGDATABASE || process.env.PG_DATABASE || 'gpg_seguros';
   poolConfig.ssl = { rejectUnauthorized: false };
 } else {
-  console.log('[DB Config]: Usando configuración local por defecto (localhost:5432)');
+  console.log('⚠️ [DB Config Warning]: No se encontró DATABASE_URL. Usando fallback localhost:5432 (Configure DATABASE_URL en el Dashboard de Render -> Environment).');
   poolConfig.host = process.env.PG_HOST || 'localhost';
   poolConfig.port = parseInt(process.env.PG_PORT || '5432');
   poolConfig.user = process.env.PG_USER || 'postgres';
