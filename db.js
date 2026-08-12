@@ -84,9 +84,11 @@ async function all(sql, params = []) {
   return result.rows;
 }
 
+const fs = require('fs');
+const path = require('path');
+
 // ─────────────────────────────────────────────
 // Inicialización: verifica conexión y carga datos semilla
-// (las tablas ya fueron creadas con schema.sql)
 // ─────────────────────────────────────────────
 async function initDatabase() {
   try {
@@ -94,7 +96,15 @@ async function initDatabase() {
     console.log('Conectado a PostgreSQL:', client.database);
     client.release();
 
-    // Verificar si ya existen usuarios; si no, cargar datos semilla
+    // 1. Ejecutar schema.sql para garantizar que todas las tablas existan
+    const schemaPath = path.join(__dirname, 'schema.sql');
+    if (fs.existsSync(schemaPath)) {
+      const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+      await pool.query(schemaSql);
+      console.log('Schema verificado/aplicado en PostgreSQL.');
+    }
+
+    // 2. Verificar si ya existen usuarios; si no, cargar datos semilla
     const userCount = await get('SELECT COUNT(*) AS count FROM usuarios');
     if (parseInt(userCount.count) === 0) {
       await seedDatabase();
@@ -108,7 +118,7 @@ async function initDatabase() {
       }
     }
 
-    // Verificar e inicializar tasas de comisión si no existen
+    // 3. Verificar e inicializar tasas de comisión si no existen
     await seedTasasComision();
 
     console.log('Base de datos inicializada correctamente.');
