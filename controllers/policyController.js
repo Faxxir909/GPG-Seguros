@@ -54,14 +54,29 @@ async function createPolicy(req, res, next) {
 }
 
 async function updatePolicy(req, res, next) {
-  const { numero_poliza, fecha_inicio, fecha_vencimiento, cobertura, estado, monto_total, valor_cuota, forma_pago, compania, vehiculo_id } = req.body;
+  const { numero_poliza, fecha_inicio, fecha_vencimiento, cobertura, estado, monto_total, valor_cuota, forma_pago, compania, vehiculo_id, motor, chasis } = req.body;
   
   try {
+    const valCuota = parseFloat(valor_cuota || 0);
+    const montoTot = parseFloat(monto_total || 0) || valCuota;
+
     await db.run(`
       UPDATE polizas
-      SET numero_poliza = ?, fecha_inicio = ?, fecha_vencimiento = ?, cobertura = ?, estado = ?, monto_total = ?, valor_cuota = ?, forma_pago = ?, compania = ?, vehiculo_id = ?
+      SET numero_poliza = ?, fecha_inicio = ?, fecha_vencimiento = ?, cobertura = ?, estado = ?, monto_total = ?, valor_cuota = ?, forma_pago = ?, compania = ?
       WHERE id = ?
-    `, [numero_poliza, fecha_inicio, fecha_vencimiento, cobertura, estado, monto_total, valor_cuota, forma_pago, compania, vehiculo_id, req.params.id]);
+    `, [numero_poliza, fecha_inicio, fecha_vencimiento, cobertura, estado, montoTot, valCuota, forma_pago, compania, req.params.id]);
+
+    const pol = await db.get('SELECT vehiculo_id FROM polizas WHERE id = ?', [req.params.id]);
+    const targetVehId = vehiculo_id || (pol ? pol.vehiculo_id : null);
+
+    if (targetVehId && (motor !== undefined || chasis !== undefined)) {
+      await db.run(`
+        UPDATE vehiculos
+        SET motor = COALESCE(?, motor), chasis = COALESCE(?, chasis)
+        WHERE id = ?
+      `, [motor ? String(motor).trim() : null, chasis ? String(chasis).trim() : null, targetVehId]);
+    }
+
     res.json({ message: 'Póliza actualizada con éxito' });
   } catch (err) {
     next(err);

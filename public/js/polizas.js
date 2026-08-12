@@ -36,8 +36,16 @@ function renderPolicies(policies) {
   if (policies.length === 0) { tbody.innerHTML = `<tr><td colspan="9" class="text-center py-4">No se encontraron pólizas.</td></tr>`; return; }
   let html = '';
   policies.forEach(p => {
-    const vDesc = p.marca ? `${p.marca} ${p.modelo} <span class="small font-monospace bg-light p-1">(${p.patente})</span>` : 'Sin vehículo';
+    const motorTag = p.motor ? `<div class="small text-muted"><i class="fa-solid fa-gears me-1"></i>Mot: ${p.motor}</div>` : '';
+    const vDesc = p.marca ? `${p.marca} ${p.modelo} <span class="small font-monospace bg-light p-1">(${p.patente})</span>${motorTag}` : 'Sin vehículo';
     const renLabel = p.numero_renovacion > 0 ? ` <span class="badge bg-info text-dark" style="font-size:10px;">Ren. ${p.numero_renovacion}</span>` : '';
+    
+    const cuotaDisplay = (p.valor_cuota && parseFloat(p.valor_cuota) > 0)
+      ? `<div class="fw-bold text-success">${formatMoney(p.valor_cuota)}/mes</div>`
+      : (p.monto_total && parseFloat(p.monto_total) > 0)
+        ? `<div class="fw-bold text-success">${formatMoney(p.monto_total)}</div>`
+        : `<span class="badge bg-warning text-dark cursor-pointer" onclick="openEditPolicyModal(${p.id})" title="Hacer clic para ingresar valor de la cuota"><i class="fa-solid fa-pen me-1"></i> A ingresar</span>`;
+
     html += `
       <tr>
         <td><strong>${p.numero_poliza || 'PENDIENTE'}</strong>${renLabel}</td>
@@ -46,9 +54,12 @@ function renderPolicies(policies) {
         <td>${p.compania}</td>
         <td>${p.cobertura}</td>
         <td class="fw-bold">${formatDate(p.fecha_vencimiento)}</td>
-        <td><div class="fw-bold text-success">${formatMoney(p.valor_cuota)}/mes</div><div class="small text-muted">${p.forma_pago}</div></td>
+        <td>${cuotaDisplay}<div class="small text-muted">${p.forma_pago || ''}</div></td>
         <td><span class="badge-status badge-${p.estado}">${p.estado}</span></td>
-        <td>${p.estado === 'vencida' ? `<button class="btn btn-sm btn-success py-1" onclick="quickRenewPolicy(${p.id})"><i class="fa-solid fa-rotate"></i></button>` : ''}</td>
+        <td>
+          <button class="btn btn-sm btn-outline-primary py-1 me-1" title="Editar Póliza" onclick="openEditPolicyModal(${p.id})"><i class="fa-solid fa-pen-to-square"></i></button>
+          ${p.estado === 'vencida' ? `<button class="btn btn-sm btn-success py-1" title="Renovar Póliza" onclick="quickRenewPolicy(${p.id})"><i class="fa-solid fa-rotate"></i></button>` : ''}
+        </td>
       </tr>`;
   });
   tbody.innerHTML = html;
@@ -164,4 +175,55 @@ document.addEventListener('DOMContentLoaded', () => {
       btnSubmit.innerHTML = `<i class="fa-solid fa-upload me-1"></i> Subir e Importar Pólizas`;
     }
   });
+
+  // Guardar edición de póliza
+  document.getElementById('formEditarPoliza')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const policyId = document.getElementById('edit-poliza-id').value;
+    const vehiculoId = document.getElementById('edit-vehiculo-id').value;
+
+    const payload = {
+      numero_poliza: document.getElementById('edit-poliza-numero').value.trim(),
+      compania: document.getElementById('edit-poliza-compania').value.trim(),
+      cobertura: document.getElementById('edit-poliza-cobertura').value.trim(),
+      estado: document.getElementById('edit-poliza-estado').value,
+      valor_cuota: parseFloat(document.getElementById('edit-poliza-cuota').value || 0),
+      monto_total: parseFloat(document.getElementById('edit-poliza-monto').value || 0),
+      fecha_inicio: document.getElementById('edit-poliza-inicio').value,
+      fecha_vencimiento: document.getElementById('edit-poliza-vencimiento').value,
+      forma_pago: document.getElementById('edit-poliza-pago').value,
+      vehiculo_id: vehiculoId ? parseInt(vehiculoId) : null,
+      motor: document.getElementById('edit-vehiculo-motor').value.trim(),
+      chasis: document.getElementById('edit-vehiculo-chasis').value.trim()
+    };
+
+    try {
+      await apiFetch(`/api/policies/${policyId}`, { method: 'PUT', body: payload });
+      bootstrap.Modal.getInstance(document.getElementById('modalEditarPoliza')).hide();
+      showToast('Póliza actualizada con éxito.', 'success');
+      loadPoliciesList();
+    } catch (err) {
+      showToast('Error al actualizar póliza: ' + err.message, 'danger');
+    }
+  });
 });
+
+function openEditPolicyModal(policyId) {
+  const p = policiesList.find(item => item.id === policyId);
+  if (!p) return;
+  document.getElementById('edit-poliza-id').value = p.id;
+  document.getElementById('edit-vehiculo-id').value = p.vehiculo_id || '';
+  document.getElementById('edit-poliza-numero').value = p.numero_poliza || '';
+  document.getElementById('edit-poliza-compania').value = p.compania || '';
+  document.getElementById('edit-poliza-cobertura').value = p.cobertura || '';
+  document.getElementById('edit-poliza-estado').value = p.estado || 'vigente';
+  document.getElementById('edit-poliza-cuota').value = p.valor_cuota || '';
+  document.getElementById('edit-poliza-monto').value = p.monto_total || '';
+  document.getElementById('edit-poliza-inicio').value = (p.fecha_inicio || '').split('T')[0];
+  document.getElementById('edit-poliza-vencimiento').value = (p.fecha_vencimiento || '').split('T')[0];
+  document.getElementById('edit-poliza-pago').value = p.forma_pago || 'debito_automatico';
+  document.getElementById('edit-vehiculo-motor').value = p.motor || '';
+  document.getElementById('edit-vehiculo-chasis').value = p.chasis || '';
+
+  new bootstrap.Modal(document.getElementById('modalEditarPoliza')).show();
+}
