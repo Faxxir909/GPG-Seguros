@@ -93,13 +93,14 @@ async function convertQuote(req, res, next) {
     await db.run("UPDATE cotizaciones SET estado = 'aceptada' WHERE id = ?", [quote.id]);
 
     // Comisión
+    const cuotaVal = parseFloat(quote.valor_cuota || quote.monto_total || 0);
     const tasa = await getCommissionRate(quote.compania, quote.cobertura);
-    const montoComision = quote.valor_cuota * tasa;
+    const montoComision = cuotaVal * tasa;
     const periodo = fecha_inicio.substring(0, 7);
     await db.run(`
       INSERT INTO comisiones (poliza_id, compania, monto_poliza, tasa_comision, monto_comision, estado_pago, periodo)
       VALUES (?, ?, ?, ?, ?, 'pendiente', ?)
-    `, [result.id, quote.compania, quote.monto_total, tasa, montoComision, periodo]);
+    `, [result.id, quote.compania, parseFloat(quote.monto_total || cuotaVal || 0), tasa, montoComision, periodo]);
 
     // Historial
     await db.run(`

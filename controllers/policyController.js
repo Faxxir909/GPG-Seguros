@@ -33,13 +33,14 @@ async function createPolicy(req, res, next) {
     `, [numero_poliza, numRen, fecha_inicio, fecha_vencimiento, cobertura, estado, monto_total, valor_cuota, forma_pago, compania, cliente_id, vehiculo_id]);
 
     // Crear registro automático de comisión según la tasa configurada para la compañía
+    const cuotaVal = parseFloat(valor_cuota || monto_total || 0);
     const tasa = await getCommissionRate(compania, cobertura);
-    const montoComision = valor_cuota * tasa;
+    const montoComision = cuotaVal * tasa;
     const periodo = fecha_inicio.substring(0, 7);
     await db.run(`
       INSERT INTO comisiones (poliza_id, compania, monto_poliza, tasa_comision, monto_comision, estado_pago, periodo)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `, [result.id, compania, monto_total, tasa, montoComision, 'pendiente', periodo]);
+    `, [result.id, compania, parseFloat(monto_total || cuotaVal || 0), tasa, montoComision, 'pendiente', periodo]);
 
     // Agregar registro histórico al cliente
     await db.run(`
