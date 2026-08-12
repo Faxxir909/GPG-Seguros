@@ -49,42 +49,61 @@ async function parsePolicyPdfBuffer(pdfBuffer) {
 
   // 2. CLIENTE / ASEGURADO
   let nombreCliente = '';
-  // Patron tipo: "Nombre (1.116.571) BERGIA, JORGE FABIAN" o "Asegurado: BERGIA JORGE FABIAN"
-  const mNombre1 = fullSingleLineText.match(/Nombre\s*(?:\([\d\.]+\))?\s*([A-Z\s,ÁÉÍÓÚÑ]{3,40})(?=\s+Documento|\s+CUIT|\s+DNI|\s+Domicilio|$)/i);
-  if (mNombre1 && mNombre1[1]) {
-    nombreCliente = cleanText(mNombre1[1]);
-  } else {
-    const mNombre2 = fullSingleLineText.match(/(?:Asegurado|Tomador):\s*([A-Z\s,ÁÉÍÓÚÑ]{3,40})/i);
-    if (mNombre2) nombreCliente = cleanText(mNombre2[1]);
+  // Buscar en líneas individuales primero
+  for (let idx = 0; idx < lines.length; idx++) {
+    const line = lines[idx];
+    if (/^Nombre\b/i.test(line) || /Tomador|Asegurado/i.test(line)) {
+      // Ejemplo: "Nombre (1.116.571) BERGIA, JORGE FABIAN"
+      let candidate = line.replace(/^Nombre\s*(?:\([\d\.]+\))?/i, '').replace(/^(?:Tomador|Asegurado)\s*:?/i, '').trim();
+      if (!candidate && idx + 1 < lines.length) {
+        candidate = lines[idx + 1];
+      }
+      candidate = candidate.replace(/\([\d\.]+\)/g, '').replace(/Documento.*/i, '').replace(/CUIT.*/i, '').replace(/DNI.*/i, '').trim();
+      if (candidate && candidate.length > 3 && !/^\d+$/.test(candidate)) {
+        nombreCliente = candidate;
+        break;
+      }
+    }
   }
 
-  // Normalizar nombre "APELLIDO, NOMBRE" -> "NOMBRE APELLIDO" o mantener limpio
+  if (!nombreCliente) {
+    const mNombre = fullSingleLineText.match(/(?:Nombre|Asegurado|Tomador)\s*(?:\([\d\.]+\))?\s*:?\s*([A-Z\s,ÁÉÍÓÚÑ]{3,40})(?=\s+Documento|\s+CUIT|\s+DNI|\s+Domicilio|$)/i);
+    if (mNombre) nombreCliente = cleanText(mNombre[1]);
+  }
+
+  // Normalizar "APELLIDO, NOMBRE" -> "NOMBRE APELLIDO"
   if (nombreCliente.includes(',')) {
     const parts = nombreCliente.split(',').map(p => p.trim());
     if (parts.length === 2) {
       nombreCliente = `${parts[1]} ${parts[0]}`;
     }
   }
+  nombreCliente = nombreCliente.replace(/[^A-Za-zÁÉÍÓÚáéíóúÑñ\s]/g, ' ').replace(/\s+/g, ' ').trim();
 
   // CUIT / DNI
   let dniCuit = '';
   const mCuit = fullSingleLineText.match(/(?:CUIT|CUIL|Documento)\s*:?\s*(\d{2}[-\s]?\d{8}[-\s]?\d{1}|\d{11})/i);
   if (mCuit) {
     dniCuit = mCuit[1].replace(/[^0-9]/g, '');
+    if (dniCuit.length === 11) {
+      dniCuit = `${dniCuit.substring(0,2)}-${dniCuit.substring(2,10)}-${dniCuit.substring(10,11)}`;
+    }
   } else {
     const mDni = fullSingleLineText.match(/(?:DNI|Doc\.?)\s*:?\s*(\d{7,8})/i);
     if (mDni) dniCuit = mDni[1];
   }
 
-  // Domicilio, Localidad, Provincia, Teléfono
+  // Domicilio
   let direccion = '';
   const mDir = fullSingleLineText.match(/Domicilio\s*:?\s*([^\n]+?)(?=\s+Localidad|\s+Teléfono|\s+IVA|$)/i);
   if (mDir) direccion = cleanText(mDir[1]);
 
+  // Localidad
   let localidad = '';
   const mLoc = fullSingleLineText.match(/Localidad\s*:?\s*(?:\(\d+\))?\s*([A-Z\sÁÉÍÓÚÑ]+?)(?=\s*,|\s+CORDOBA|\s+BUENOS AIRES|\s+SANTA FE|\s+Teléfono|\s+IVA|$)/i);
   if (mLoc) localidad = cleanText(mLoc[1]);
 
+  // Provincia
   let provincia = '';
   if (/CORDOBA|CÓRDOBA/i.test(fullSingleLineText)) provincia = 'Córdoba';
   else if (/BUENOS AIRES/i.test(fullSingleLineText)) provincia = 'Buenos Aires';
@@ -94,14 +113,15 @@ async function parsePolicyPdfBuffer(pdfBuffer) {
   else if (/TUCUMAN|TUCUMÁN/i.test(fullSingleLineText)) provincia = 'Tucumán';
   else if (/ENTRE RIOS|ENTRE RÍOS/i.test(fullSingleLineText)) provincia = 'Entre Ríos';
 
+  // Teléfono
   let telefono = '';
-  const mTel = fullSingleLineText.match(/(?:Teléfono|Tel|Celular)\s*:?\s*([\d\(\)\s-]{7,15})/i);
+  const mTel = fullSingleLineText.match(/(?:Teléfono|Tel|Celular)\s*:?\s*([\d\(\)\s-]{7,18})/i);
   if (mTel) telefono = cleanText(mTel[1]).replace(/[^0-9]/g, '');
 
   // 3. VEHÍCULO
   let patente = '';
-  const mPat = fullSingleLineText.match(/(?:Dominio|Patente)\s*:?\s*([A-Z]{2}\d{3}[A-Z]{2}|[A-Z]{3}\d{3})/i);
-  if (mPat) patente = mPat[1].toUpperCase();
+  const mPat = fullSingleLineText.match(/(?:Dominio|Patente)\s*:?\s*([A-Z]{2}\s?\d{3}\s?[A-Z]{2}|[A-Z]{3}\s?\d{3})/i);
+  if (mPat) patente = mPat[1].replace(/\s+/g, '').toUpperCase();
 
   let vehiculoStr = '';
   const mVeh = fullSingleLineText.match(/Vehículo\s*(?:\d+)?\s*-?\s*([A-Z0-9\s\/\.-]{5,60})(?=\s+Año|\s+Dominio|\s+Tipo|$)/i);
@@ -111,9 +131,9 @@ async function parsePolicyPdfBuffer(pdfBuffer) {
   let modelo = '';
   let version = '';
 
-  const carBrands = ['CHEVROLET','TOYOTA','FORD','FIAT','PEUGEOT','VOLKSWAGEN','RENAULT','CITROEN','HONDA','NISSAN','HYUNDAI','JEEP','RAM'];
+  const carBrands = ['CHEVROLET','TOYOTA','FORD','FIAT','PEUGEOT','VOLKSWAGEN','RENAULT','CITROEN','HONDA','NISSAN','HYUNDAI','JEEP','RAM','MERCEDES','BMW','AUDI'];
   for (const b of carBrands) {
-    if (new RegExp(b, 'i').test(vehiculoStr || fullSingleLineText)) {
+    if (new RegExp('\\b' + b + '\\b', 'i').test(vehiculoStr || fullSingleLineText)) {
       marca = b.charAt(0) + b.slice(1).toLowerCase();
       if (marca === 'Volkswagen') marca = 'Volkswagen';
       break;
@@ -121,12 +141,18 @@ async function parsePolicyPdfBuffer(pdfBuffer) {
   }
 
   if (vehiculoStr) {
-    // Ejemplo: "CHEVROLET S-10 2.8 TD 4X4 D/C DLX - GPV966"
-    let cleanVeh = vehiculoStr.replace(new RegExp(marca, 'gi'), '').replace(/-?\s*[A-Z]{2,3}\d{3}[A-Z]{0,2}/gi, '').trim();
+    let cleanVeh = vehiculoStr
+      .replace(new RegExp(marca, 'gi'), '')
+      .replace(/-\s*[A-Z0-9\s]{6,8}$/gi, '')
+      .trim();
+    
+    // Quitar números iniciales tipo "1 - "
+    cleanVeh = cleanVeh.replace(/^\d+\s*-\s*/, '').trim();
+
     const parts = cleanVeh.split(' ').filter(Boolean);
     if (parts.length > 0) {
       modelo = parts[0];
-      version = parts.slice(1).join(' ');
+      version = parts.slice(1).join(' ').replace(/-?\s*[A-Z]{2,3}\d{3}[A-Z]{0,2}/gi, '').trim();
     }
   }
 
@@ -148,7 +174,7 @@ async function parsePolicyPdfBuffer(pdfBuffer) {
   // 4. PÓLIZA
   let numeroPoliza = '';
   const mPol = fullSingleLineText.match(/(?:Número|Póliza\s*Nº?)\s*:?\s*([\d\.-]{4,15})/i);
-  if (mPol) numeroPoliza = mPol[1].replace(/[^0-9-]/g, '');
+  if (mPol) numeroPoliza = mPol[1].trim();
 
   let fechaInicio = '';
   let fechaVencimiento = '';
@@ -168,7 +194,7 @@ async function parsePolicyPdfBuffer(pdfBuffer) {
   const mCob = fullSingleLineText.match(/Cobertura\s*:?\s*([^\n]+?)(?=\s+Suma|\s+Premio|\s+Coberturas|\s+Plan|$)/i);
   if (mCob) cobertura = cleanText(mCob[1]);
   if (!cobertura || cobertura.length > 50) {
-    if (/ROBO|HURTO/i.test(fullSingleLineText) && /INCENDIO/i.test(fullSingleLineText)) cobertura = 'Terceros Completos (Robo/Incendio/RC)';
+    if (/ROBO|HURTO/i.test(fullSingleLineText) && /INCENDIO/i.test(fullSingleLineText)) cobertura = 'Accidente, Incendio y Robo Total (C3)';
     else if (/TODO RIESGO/i.test(fullSingleLineText)) cobertura = 'Todo Riesgo con Franquicia';
     else cobertura = 'Responsabilidad Civil Básica';
   }
@@ -186,19 +212,20 @@ async function parsePolicyPdfBuffer(pdfBuffer) {
   }
 
   let valorCuota = 0;
-  const mCuota = fullSingleLineText.match(/(?:Cuota|Importe)\s*1?\s*\$\s*([\d\.,]+)/i);
+  const mCuota = fullSingleLineText.match(/(?:Cuota\s*\d*|Importe)\s*:?\s*\$\s*([\d\.,]+)/i);
   if (mCuota) {
     valorCuota = parseFloat(mCuota[1].replace(/\./g, '').replace(',', '.'));
   }
 
-  let formaPago = 'efectivo';
+  let formaPago = 'debito_automatico';
   if (/DÉBITO AUTOMÁTICO|DEBITO AUTOMATICO/i.test(fullSingleLineText)) formaPago = 'debito_automatico';
   else if (/TARJETA/i.test(fullSingleLineText)) formaPago = 'tarjeta_credito';
   else if (/TRANSFERENCIA/i.test(fullSingleLineText)) formaPago = 'transferencia';
+  else if (/EFECTIVO|COBRANZA/i.test(fullSingleLineText)) formaPago = 'efectivo';
 
   return {
     cliente: {
-      nombre: nombreCliente || 'Asegurado Desconocido',
+      nombre: nombreCliente || '',
       dni_cuit: dniCuit || '',
       direccion: direccion || '',
       localidad: localidad || '',
@@ -207,24 +234,24 @@ async function parsePolicyPdfBuffer(pdfBuffer) {
     },
     vehiculo: {
       patente: patente || '',
-      marca: marca || 'Chevrolet',
-      modelo: modelo || 'S-10',
+      marca: marca || '',
+      modelo: modelo || '',
       version: version || '',
-      anio: anio || 2020,
+      anio: anio || new Date().getFullYear(),
       chasis: chasis || '',
       motor: motor || '',
       uso: uso
     },
     poliza: {
-      numero_poliza: numeroPoliza || '4553240',
-      compania: compania || 'El Norte Seguros',
+      numero_poliza: numeroPoliza || '',
+      compania: compania !== 'Desconocida' ? compania : 'El Norte Seguros',
       fecha_inicio: fechaInicio || new Date().toISOString().split('T')[0],
       fecha_vencimiento: fechaVencimiento || new Date(Date.now() + 120*86400000).toISOString().split('T')[0],
       cobertura: cobertura || 'Accidente, Incendio y Robo Total',
-      monto_total: montoTotal || 194392.48,
-      valor_cuota: valorCuota || 48598.12,
+      monto_total: montoTotal || 0,
+      valor_cuota: valorCuota || 0,
       forma_pago: formaPago,
-      suma_asegurada: sumaAsegurada || 13250000
+      suma_asegurada: sumaAsegurada || 0
     }
   };
 }
