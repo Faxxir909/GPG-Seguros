@@ -95,7 +95,7 @@ async function createClient(req, res, next) {
     const result = await db.run(`
       INSERT INTO clientes (nombre, dni_cuit, fecha_nacimiento, telefono, email, direccion, localidad, provincia, observaciones, estado, riesgo_baja)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [nombre, dni_cuit, fecha_nacimiento, telefono, email, direccion, localidad, provincia, observaciones, estado || 'activo', riesgo_baja || 0]);
+    `, [nombre, dni_cuit, fecha_nacimiento, telefono, email, direccion, localidad, provincia, observaciones, estado || 'activo', Boolean(riesgo_baja)]);
     res.status(201).json({ id: result.id, message: 'Cliente creado con éxito' });
   } catch (err) {
     next(err);
@@ -129,7 +129,7 @@ async function updateClient(req, res, next) {
       UPDATE clientes
       SET nombre = ?, dni_cuit = ?, fecha_nacimiento = ?, telefono = ?, email = ?, direccion = ?, localidad = ?, provincia = ?, observaciones = ?, estado = ?, riesgo_baja = ?
       WHERE id = ?
-    `, [nombre, dni_cuit, fecha_nacimiento, telefono, email, direccion, localidad, provincia, observaciones, estado, riesgo_baja, req.params.id]);
+    `, [nombre, dni_cuit, fecha_nacimiento, telefono, email, direccion, localidad, provincia, observaciones, estado, Boolean(riesgo_baja), req.params.id]);
     res.json({ message: 'Cliente actualizado con éxito' });
   } catch (err) {
     next(err);
@@ -144,6 +144,18 @@ async function deleteClient(req, res, next) {
   } catch (err) {
     next(err);
   }
+}
+
+// Importar clientes desde Excel
+function findRowValue(row, patterns) {
+  const keys = Object.keys(row);
+  for (const pattern of patterns) {
+    const key = keys.find(k => pattern.test(k.trim()));
+    if (key && row[key] !== undefined && row[key] !== null && String(row[key]).trim() !== '') {
+      return row[key];
+    }
+  }
+  return undefined;
 }
 
 // Importar clientes desde Excel
@@ -173,7 +185,22 @@ async function importClients(req, res, next) {
 
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
-    const jsonData = XLSX.utils.sheet_to_json(worksheet);
+    let jsonData = XLSX.utils.sheet_to_json(worksheet);
+
+    if (jsonData.length === 0 || !jsonData.some(row => findRowValue(row, [/nombre/i, /tomador/i, /asegurado/i, /cliente/i]))) {
+      const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+      const headerIndex = rawRows.findIndex(r => Array.isArray(r) && r.length >= 2 && r.some(cell => typeof cell === 'string' && /^(Nombre|Cliente|Tomador|Asegurado|DNI|CUIT|Documento)$/i.test(cell.trim())));
+      if (headerIndex !== -1) {
+        const headers = rawRows[headerIndex];
+        jsonData = rawRows.slice(headerIndex + 1).filter(r => r && r.length > 1).map(r => {
+          const obj = {};
+          headers.forEach((h, i) => {
+            if (h && r[i] !== undefined) obj[h] = r[i];
+          });
+          return obj;
+        });
+      }
+    }
 
     if (!jsonData || !jsonData.length) {
       const error = new Error('El archivo Excel está vacío.');
@@ -186,31 +213,76 @@ async function importClients(req, res, next) {
     let omitidos = 0;
 
     for (const row of jsonData) {
-      const nombre = row['Nombre'] || row['Nombre y Apellido'] || row['nombre'] || row['Nombre Completo'];
-      let dni_cuit = row['DNI/CUIT'] || row['DNI'] || row['CUIT'] || row['dni'] || row['cuit'] || row['Documento'] || row['documento'];
+      let rawNombre = findRowValue(row, [
+        /^Nombre(\s+y\s+Apellido)?$/i,
+        /^Nombre\s+Completo$/i,
+        /^Cliente$/i,
+        /^Tomador$/i,
+        /^Asegurado$/i,
+        /^Raz[óo]n\s+Social$/i,
+        /nombre/i,
+        /cliente/i,
+        /tomador/i
+      ]);
 
-      if (!nombre || !dni_cuit) {
-        omitidos++;
-        continue;
+      let dni_cuit = findRowValue(row, [
+        /^Nro[\s_\.]*Doc(umento)?$/i,
+        /^N[º°o\.]?[\s_\.]*Doc(umento)?$/i,
+        /^N[úu]m(ero)?[\s_\.]*Doc(umento)?$/i,
+        /^Doc(umento)?[\s_\.]*Nro$/i,
+        /^Documento$/i,
+        /^Doc$/i,
+        /^DNI$/i,
+        /^D\.N\.I\.?$/i,
+        /^CUIT$/i,
+        /^C\.U\.I\.T\.?$/i,
+        /^CUIL$/i,
+        /^C\.U\.I\.L\.?$/i,
+        /^DNI[\/\s_\.-]*CUIT$/i,
+        /^CUIT[\/\s_\.-]*DNI$/i,
+        /^CUIT[\/\s_\.-]*CUIL$/i,
+        /^CUIL[\/\s_\.-]*CUIT$/i,
+        /^Identificaci[óo]n$/i,
+        /^Nro[\s_\.]*Identificaci[óo]n$/i,
+        /^Tomador[\s_\.]*Doc$/i,
+        /^Asegurado[\s_\.]*Doc$/i,
+        /cuit/i,
+        /cuil/i,
+        /dni/i,
+        /documento/i,
+        /doc/i
+      ]);
+
+      let nombre = String(rawNombre || 'Cliente S/N').trim();
+      let dniStr = dni_cuit ? String(dni_cuit).trim().replace(/[^0-9-]/g, '') : null;
+
+      // Si el nombre viene en formato "1116571 - BERGIA, JORGE FABIAN"
+      if (nombre.includes(' - ')) {
+        const parts = nombre.split(' - ');
+        let rawName = parts.slice(1).join(' - ').trim();
+        if (rawName.includes(',')) {
+          const nameParts = rawName.split(',');
+          rawName = `${nameParts[1].trim()} ${nameParts[0].trim()}`;
+        }
+        nombre = rawName || nombre;
+      } else if (nombre.includes(',')) {
+        const nameParts = nombre.split(',');
+        nombre = `${nameParts[1].trim()} ${nameParts[0].trim()}`;
       }
 
-      dni_cuit = String(dni_cuit).trim();
-
-      // Omitir filas con CUITs/DNIs de formato inválido en importación
-      if (!validateDniOrCuit(dni_cuit)) {
-        omitidos++;
-        continue;
+      if (!dniStr) {
+        dniStr = `CLI-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
       }
 
-      const fecha_nacimiento = row['Fecha de Nacimiento'] || row['Fecha Nacimiento'] || row['fecha_nacimiento'] || null;
-      const telefono = row['Teléfono'] || row['Telefono'] || row['telefono'] || row['Tel'] || row['tel'] || null;
-      const email = row['Email'] || row['email'] || row['Correo'] || row['correo'] || null;
-      const direccion = row['Dirección'] || row['Direccion'] || row['direccion'] || null;
-      const localidad = row['Localidad'] || row['localidad'] || row['Ciudad'] || row['ciudad'] || null;
-      const provincia = row['Provincia'] || row['provincia'] || null;
-      const observaciones = row['Observaciones'] || row['observaciones'] || row['Notas'] || row['notas'] || null;
+      const fecha_nacimiento = findRowValue(row, [/^Fecha(\s+de)?\s*Nacimiento$/i, /^Nacimiento$/i]);
+      const telefono = findRowValue(row, [/^Tel[ée]fonos?$/i, /^Celular$/i, /^M[óo]vil$/i, /^Tel$/i]);
+      const email = findRowValue(row, [/^E-?mail$/i, /^Correo(\s*Electr[óo]nico)?$/i]);
+      const direccion = findRowValue(row, [/^Direcci[óo]n$/i, /^Domicilio$/i, /^Calle$/i]);
+      const localidad = findRowValue(row, [/^Localidad$/i, /^Ciudad$/i, /^Pueblo$/i]);
+      const provincia = findRowValue(row, [/^Provincia$/i]) || 'Córdoba';
+      const observaciones = findRowValue(row, [/^Observaciones$/i, /^Notas$/i]);
 
-      const existe = await db.get('SELECT id FROM clientes WHERE dni_cuit = ?', [dni_cuit]);
+      const existe = await db.get('SELECT id FROM clientes WHERE dni_cuit = ?', [dniStr]);
 
       if (existe) {
         await db.run(`
@@ -242,7 +314,7 @@ async function importClients(req, res, next) {
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [
           String(nombre),
-          dni_cuit,
+          dniStr,
           fecha_nacimiento ? String(fecha_nacimiento) : null,
           telefono ? String(telefono) : null,
           email ? String(email) : null,
@@ -251,7 +323,7 @@ async function importClients(req, res, next) {
           provincia ? String(provincia) : null,
           observaciones ? String(observaciones) : null,
           'activo',
-          0
+          false
         ]);
         insertados++;
       }

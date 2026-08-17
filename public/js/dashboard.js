@@ -1,7 +1,19 @@
-﻿// =========================================================================
+// =========================================================================
 // dashboard.js — Lógica del Dashboard y gráficos
 // =========================================================================
 async function loadDashboardData() {
+  // Mostrar placeholders de carga en métricas si están vacíos
+  const statIds = ['stat-clientes-activos', 'stat-polizas-vigentes', 'stat-vencimientos-30', 'stat-siniestros-abiertos', 'stat-produccion-mes', 'stat-comisiones-mes'];
+  statIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (el && !el.innerText.trim()) {
+      el.innerHTML = '<span class="skeleton-shimmer" style="height: 22px; width: 45px; border-radius: 4px; display: inline-block;"></span>';
+    }
+  });
+
+  // Skeleton para la tabla de vencimientos
+  showTableSkeleton('dashboard-vencimientos-body', 4, 4);
+
   try {
     const data = await apiFetch('/api/dashboard');
     document.getElementById('stat-clientes-activos').innerText = data.clientesActivos;
@@ -12,22 +24,43 @@ async function loadDashboardData() {
     document.getElementById('stat-comisiones-mes').innerText = formatMoney(data.comisionesMes);
 
     const tbody = document.getElementById('dashboard-vencimientos-body');
-    tbody.innerHTML = '';
-    if (data.listadoVencimientos.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="4" class="text-center text-muted">No hay vencimientos próximos.</td></tr>`;
+    if (!data.listadoVencimientos || data.listadoVencimientos.length === 0) {
+      showTableEmpty('dashboard-vencimientos-body', 4, 'No hay pólizas con vencimientos próximos en los siguientes 30 días.', 'fa-calendar-check');
     } else {
+      let html = '';
       data.listadoVencimientos.forEach(p => {
-        const waMsg = encodeURIComponent(`Hola ${p.cliente_nombre}, te recordamos que tu póliza Nº ${p.numero_poliza} (${p.cobertura}) en ${p.compania} vence el ${formatDate(p.fecha_vencimiento)}. Por favor contáctanos para coordinar la renovación.`);
-        const waUrl = `https://wa.me/${p.cliente_telefono}?text=${waMsg}`;
-        tbody.innerHTML += `<tr><td><strong>${p.cliente_nombre}</strong></td><td>${p.compania}</td><td class="text-danger fw-bold">${formatDate(p.fecha_vencimiento)}</td><td><a href="${waUrl}" target="_blank" class="btn-whatsapp-share"><i class="fa-brands fa-whatsapp"></i> Avisar</a></td></tr>`;
+        const cleanTel = p.cliente_telefono ? String(p.cliente_telefono).replace(/[^0-9]/g, '') : '';
+        const waMsg = encodeURIComponent(`Hola ${p.cliente_nombre}, te recordamos desde GPG Seguros que tu póliza Nº ${p.numero_poliza} (${p.cobertura}) en ${p.compania} vence el ${formatDate(p.fecha_vencimiento)}. ¿Coordinamos la renovación?`);
+        const waBtn = cleanTel ? `
+          <a href="https://wa.me/${cleanTel}?text=${waMsg}" target="_blank" class="btn btn-sm btn-success px-3 py-1 shadow-sm" style="border-radius: 8px;">
+            <i class="fa-brands fa-whatsapp me-1"></i> Avisar
+          </a>
+        ` : `<span class="text-muted small">Sin tel.</span>`;
+
+        html += `
+          <tr>
+            <td>
+              <div class="fw-bold text-dark">${p.cliente_nombre}</div>
+              <div class="small text-muted font-monospace"><i class="fa-solid fa-file-shield me-1"></i>${p.numero_poliza} (${p.cobertura})</div>
+            </td>
+            <td><span class="badge bg-light text-dark border">${p.compania}</span></td>
+            <td>${renderExpirationCell(p.fecha_vencimiento, false, p.fecha_inicio)}</td>
+            <td>${waBtn}</td>
+          </tr>`;
       });
+      tbody.innerHTML = html;
     }
     initComisionesChart(data.comisionesMes);
-  } catch (err) { console.error('Error al cargar dashboard', err); }
+  } catch (err) {
+    console.error('Error al cargar dashboard', err);
+    showTableError('dashboard-vencimientos-body', 4, 'Error al cargar métricas del dashboard: ' + err.message, 'loadDashboardData()');
+  }
 }
 
 function initComisionesChart(montoMesActual) {
-  const ctx = document.getElementById('chartComisiones').getContext('2d');
+  const chartCanvas = document.getElementById('chartComisiones');
+  if (!chartCanvas) return;
+  const ctx = chartCanvas.getContext('2d');
   if (chartComisionesObj) chartComisionesObj.destroy();
   chartComisionesObj = new Chart(ctx, {
     type: 'line',
@@ -38,3 +71,4 @@ function initComisionesChart(montoMesActual) {
     options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
   });
 }
+

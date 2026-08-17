@@ -116,24 +116,42 @@ async function loadTabContent(tabId) {
 let allClients = [];
 
 async function loadClientsList() {
+  showTableSkeleton('clients-table-body', 7, 6);
   try {
     const data = await apiFetch('/api/clients');
-    allClients = data; clientsPage = 1; renderClientsPage();
-  } catch (err) { console.error('Error al obtener clientes', err); }
+    allClients = data;
+    clientsPage = 1;
+    renderClientsPage();
+  } catch (err) {
+    console.error('Error al obtener clientes', err);
+    showTableError('clients-table-body', 7, 'Error al cargar clientes: ' + err.message, 'loadClientsList()');
+  }
 }
 
 function renderClientsPage() {
-  const query = document.getElementById('search-client').value.toLowerCase();
+  const query = (document.getElementById('search-client')?.value || '').toLowerCase().trim();
   const filtered = query ? allClients.filter(c =>
-    c.nombre.toLowerCase().includes(query) || c.dni_cuit.includes(query) || (c.localidad && c.localidad.toLowerCase().includes(query))
+    (c.nombre && c.nombre.toLowerCase().includes(query)) ||
+    (c.dni_cuit && c.dni_cuit.includes(query)) ||
+    (c.email && c.email.toLowerCase().includes(query)) ||
+    (c.telefono && c.telefono.includes(query)) ||
+    (c.localidad && c.localidad.toLowerCase().includes(query))
   ) : allClients;
 
-  clientsPage = paginate({ items: filtered, page: clientsPage, pageSize: PAGE_SIZE, tbodyId: 'clients-table-body', renderFn: renderClients, wrapId: 'clients-pagination-wrap', infoId: 'clients-pagination-info', navId: 'clients-pagination' });
+  clientsPage = paginate({
+    items: filtered, page: clientsPage, pageSize: PAGE_SIZE,
+    tbodyId: 'clients-table-body', renderFn: (items) => renderClients(items, query),
+    wrapId: 'clients-pagination-wrap', infoId: 'clients-pagination-info', navId: 'clients-pagination'
+  });
 }
 
-function renderClients(clients) {
+function renderClients(clients, query = '') {
   const tbody = document.getElementById('clients-table-body');
-  if (clients.length === 0) { tbody.innerHTML = `<tr><td colspan="7" class="text-center py-4">No se encontraron clientes.</td></tr>`; return; }
+  if (!clients || clients.length === 0) {
+    const msg = query ? `No se encontraron clientes que coincidan con "${query}".` : 'No hay clientes registrados en el sistema.';
+    showTableEmpty('clients-table-body', 7, msg, 'fa-users-slash');
+    return;
+  }
   let html = '';
   clients.forEach(c => {
     const riskBadge = c.riesgo_baja === 1 ? `<span class="badge bg-danger">Riesgo Alto</span>` : `<span class="badge bg-secondary">Normal</span>`;
@@ -161,11 +179,11 @@ async function openClientDetail(clientId) {
 
     // Resetear estados de carga y mostrar skeletons
     resetTabLoadedStates();
-    showTableSkeleton('detail-vehicles-body', 6);
-    showTableSkeleton('detail-policies-body', 7);
-    showTableSkeleton('detail-claims-body', 6);
-    showTimelineSkeleton('detail-timeline-body');
-    showTableSkeleton('detail-docs-body', 4);
+    showTableSkeleton('detail-vehicles-body', 6, 3);
+    showTableSkeleton('detail-policies-body', 7, 3);
+    showTableSkeleton('detail-claims-body', 6, 3);
+    showTimelineSkeleton('detail-timeline-body', 3);
+    showTableSkeleton('detail-docs-body', 4, 3);
 
     const client = await apiFetch(`/api/clients/${clientId}`);
     document.getElementById('detail-client-name').innerText = client.nombre;
@@ -181,28 +199,39 @@ async function openClientDetail(clientId) {
 
     document.getElementById('clients-list-view').classList.add('d-none');
     document.getElementById('client-detail-view').classList.remove('d-none');
-  } catch (err) { showToast('Error al abrir la ficha: ' + err.message, 'danger'); }
+  } catch (err) {
+    showToast('Error al abrir la ficha: ' + err.message, 'danger');
+  }
 }
 
 // ─── SUB-TAB: VEHÍCULOS ────────────────────────────────────────────────────
 async function loadClientVehicles() {
   tabLoadedStates['tab-vehicles'] = true;
-  const vehicles = await apiFetch(`/api/clients/${activeClientId}/vehicles`);
-  const tbody = document.getElementById('detail-vehicles-body');
-  if (vehicles.length === 0) { tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted">No hay vehículos vinculados.</td></tr>`; return; }
-  let html = '';
-  vehicles.forEach(v => {
-    html += `
-      <tr>
-        <td><strong>${v.marca} ${v.modelo}</strong> <span class="small text-muted d-block">${v.version || ''}</span></td>
-        <td>${v.anio || '--'}</td>
-        <td><span class="badge bg-secondary font-monospace">${v.patente}</span></td>
-        <td><div class="small">Chasis: ${v.chasis || '--'}</div><div class="small">Motor: ${v.motor || '--'}</div></td>
-        <td class="text-capitalize">${v.uso}</td>
-        <td><button class="btn btn-sm btn-link text-danger" onclick="deleteVehicle(${v.id})"><i class="fa-solid fa-trash"></i></button></td>
-      </tr>`;
-  });
-  tbody.innerHTML = html;
+  showTableSkeleton('detail-vehicles-body', 6, 3);
+  try {
+    const vehicles = await apiFetch(`/api/clients/${activeClientId}/vehicles`);
+    const tbody = document.getElementById('detail-vehicles-body');
+    if (!vehicles || vehicles.length === 0) {
+      showTableEmpty('detail-vehicles-body', 6, 'No hay vehículos vinculados.', 'fa-car');
+      return;
+    }
+    let html = '';
+    vehicles.forEach(v => {
+      html += `
+        <tr>
+          <td><strong>${v.marca} ${v.modelo}</strong> <span class="small text-muted d-block">${v.version || ''}</span></td>
+          <td>${v.anio || '--'}</td>
+          <td><span class="badge bg-secondary font-monospace">${v.patente}</span></td>
+          <td><div class="small">Chasis: ${v.chasis || '--'}</div><div class="small">Motor: ${v.motor || '--'}</div></td>
+          <td class="text-capitalize">${v.uso}</td>
+          <td><button class="btn btn-sm btn-link text-danger" onclick="deleteVehicle(${v.id})"><i class="fa-solid fa-trash"></i></button></td>
+        </tr>`;
+    });
+    tbody.innerHTML = html;
+  } catch (err) {
+    console.error(err);
+    showTableError('detail-vehicles-body', 6, 'Error al cargar vehículos: ' + err.message, 'loadClientVehicles()');
+  }
 }
 
 async function deleteVehicle(id) {
@@ -231,50 +260,75 @@ async function inicializarMarcas() {
 // ─── SUB-TAB: PÓLIZAS DEL CLIENTE ─────────────────────────────────────────
 async function loadClientPolicies() {
   tabLoadedStates['tab-policies'] = true;
-  const policies = await apiFetch(`/api/clients/${activeClientId}/policies`);
-  const tbody = document.getElementById('detail-policies-body');
-  if (policies.length === 0) { tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted">No hay pólizas emitidas.</td></tr>`; return; }
-  let html = '';
-  policies.forEach(p => {
-    const vDesc = p.marca ? `${p.marca} ${p.modelo} (${p.patente})` : 'Sin vehículo';
-    const renLabel = p.numero_renovacion > 0 ? ` <span class="badge bg-info text-dark" style="font-size:10px;">Ren. ${p.numero_renovacion}</span>` : '';
-    html += `
-      <tr>
-        <td><strong>${p.numero_poliza || 'PENDIENTE'}</strong>${renLabel}</td>
-        <td>${p.compania}</td>
-        <td><div class="fw-bold">${p.cobertura}</div><div class="small text-muted">${vDesc}</div></td>
-        <td><div class="small">Inicio: ${formatDate(p.fecha_inicio)}</div><div class="small">Vence: ${formatDate(p.fecha_vencimiento)}</div></td>
-        <td class="fw-bold text-success">${formatMoney(p.valor_cuota)} <span class="small text-muted">(${p.forma_pago})</span></td>
-        <td><span class="badge-status badge-${p.estado}">${p.estado}</span></td>
-        <td>
-          <div class="d-flex gap-1">
-            ${p.estado === 'vencida' ? `<button class="btn btn-sm btn-success py-1" onclick="quickRenewPolicy(${p.id})"><i class="fa-solid fa-rotate me-1"></i> Renovar</button>` : ''}
-            <button class="btn btn-sm btn-link text-danger" onclick="deletePolicy(${p.id})"><i class="fa-solid fa-trash"></i></button>
-          </div>
-        </td>
-      </tr>`;
-  });
-  tbody.innerHTML = html;
+  showTableSkeleton('detail-policies-body', 7, 3);
+  try {
+    const policies = await apiFetch(`/api/clients/${activeClientId}/policies`);
+    const tbody = document.getElementById('detail-policies-body');
+    if (!policies || policies.length === 0) {
+      showTableEmpty('detail-policies-body', 7, 'No hay pólizas emitidas.', 'fa-file-contract');
+      return;
+    }
+    let html = '';
+    policies.forEach(p => {
+      const vDesc = p.marca ? `${p.marca} ${p.modelo} (${p.patente})` : '<span class="text-muted small">Sin vehículo</span>';
+      const renLabel = p.numero_renovacion > 0 ? ` <span class="badge bg-info text-dark" style="font-size:10px;">Ren. ${p.numero_renovacion}</span>` : '';
+      html += `
+        <tr>
+          <td><strong>${p.numero_poliza || 'PENDIENTE'}</strong>${renLabel}</td>
+          <td><span class="badge bg-light text-dark border">${p.compania}</span></td>
+          <td><div class="fw-bold">${p.cobertura}</div><div class="small text-muted">${vDesc}</div></td>
+          <td>${renderExpirationCell(p.fecha_vencimiento, false, p.fecha_inicio)}</td>
+          <td class="fw-bold text-success cursor-pointer" onclick="openPolicyInstallmentsModal(${p.id})" title="Ver plan de cuotas y cobranzas">
+            <div>${formatMoney(p.valor_cuota || 0)}</div>
+            <div class="small text-muted d-flex align-items-center gap-1">
+              <span>${p.forma_pago || ''}</span>
+              <i class="fa-solid fa-credit-card text-primary" style="font-size: 10px;"></i>
+            </div>
+          </td>
+          <td><span class="badge-status badge-${p.estado}">${p.estado}</span></td>
+          <td>
+            <div class="d-flex gap-1">
+              <button class="btn btn-sm btn-outline-info py-1" onclick="openPolicyInstallmentsModal(${p.id})" title="Ver Plan de Cuotas"><i class="fa-solid fa-credit-card"></i></button>
+              ${p.estado === 'vencida' ? `<button class="btn btn-sm btn-success py-1" onclick="quickRenewPolicy(${p.id})"><i class="fa-solid fa-rotate me-1"></i> Renovar</button>` : ''}
+              <button class="btn btn-sm btn-link text-danger" onclick="deletePolicy(${p.id})"><i class="fa-solid fa-trash"></i></button>
+            </div>
+          </td>
+        </tr>`;
+    });
+    tbody.innerHTML = html;
+  } catch (err) {
+    console.error(err);
+    showTableError('detail-policies-body', 7, 'Error al cargar pólizas: ' + err.message, 'loadClientPolicies()');
+  }
 }
 
 // ─── SUB-TAB: SINIESTROS DEL CLIENTE ──────────────────────────────────────
 async function loadClientClaims() {
   tabLoadedStates['tab-siniestros'] = true;
-  const filtered = await apiFetch(`/api/clients/${activeClientId}/claims`);
-  const tbody = document.getElementById('detail-claims-body');
-  if (filtered.length === 0) { tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted">No hay siniestros reportados.</td></tr>`; return; }
-  let html = '';
-  filtered.forEach(s => {
-    html += `
-      <tr>
-        <td><strong>${s.numero_siniestro}</strong></td>
-        <td><span class="badge bg-secondary font-monospace">${s.patente || '--'}</span></td>
-        <td>${formatDate(s.fecha)}</td><td>${s.descripcion}</td>
-        <td><span class="badge bg-dark">${s.estado.replace('_',' ')}</span></td>
-        <td><button class="btn btn-sm btn-link text-danger" onclick="deleteClaim(${s.id})"><i class="fa-solid fa-trash"></i></button></td>
-      </tr>`;
-  });
-  tbody.innerHTML = html;
+  showTableSkeleton('detail-claims-body', 6, 3);
+  try {
+    const filtered = await apiFetch(`/api/clients/${activeClientId}/claims`);
+    const tbody = document.getElementById('detail-claims-body');
+    if (!filtered || filtered.length === 0) {
+      showTableEmpty('detail-claims-body', 6, 'No hay siniestros reportados.', 'fa-shield-halved');
+      return;
+    }
+    let html = '';
+    filtered.forEach(s => {
+      html += `
+        <tr>
+          <td><strong>${s.numero_siniestro}</strong></td>
+          <td><span class="badge bg-secondary font-monospace">${s.patente || '--'}</span></td>
+          <td>${formatDate(s.fecha)}</td><td>${s.descripcion}</td>
+          <td><span class="badge bg-dark">${s.estado.replace('_',' ')}</span></td>
+          <td><button class="btn btn-sm btn-link text-danger" onclick="deleteClaim(${s.id})"><i class="fa-solid fa-trash"></i></button></td>
+        </tr>`;
+    });
+    tbody.innerHTML = html;
+  } catch (err) {
+    console.error(err);
+    showTableError('detail-claims-body', 6, 'Error al cargar siniestros: ' + err.message, 'loadClientClaims()');
+  }
 }
 
 async function deleteClaim(id) {
@@ -288,40 +342,59 @@ async function deleteClaim(id) {
 // ─── SUB-TAB: HISTORIAL CRM ────────────────────────────────────────────────
 async function loadClientHistory() {
   tabLoadedStates['tab-history'] = true;
-  const history = await apiFetch(`/api/clients/${activeClientId}/history`);
-  const container = document.getElementById('detail-timeline-body');
-  if (history.length === 0) { container.innerHTML = `<p class="text-muted text-center py-3">No hay historial de contactos registrado.</p>`; return; }
-  const icons = { whatsapp: 'fa-brands fa-whatsapp whatsapp', llamada: 'fa-solid fa-phone llamada', email: 'fa-solid fa-envelope email', nota: 'fa-solid fa-pen-clip nota' };
-  let html = '';
-  history.forEach(log => {
-    const iconClass = icons[log.tipo_contacto] || 'fa-solid fa-circle';
-    html += `
-      <div class="timeline-item">
-        <div class="timeline-icon ${log.tipo_contacto}"><i class="${iconClass.split(' ')[0]} ${iconClass.split(' ')[1]}"></i></div>
-        <div class="timeline-date">${new Date(log.fecha_creacion).toLocaleString()}</div>
-        <div class="timeline-content"><strong>${log.tipo_contacto.toUpperCase()}:</strong> ${log.descripcion}</div>
-      </div>`;
-  });
-  container.innerHTML = html;
+  showTimelineSkeleton('detail-timeline-body', 3);
+  try {
+    const history = await apiFetch(`/api/clients/${activeClientId}/history`);
+    const container = document.getElementById('detail-timeline-body');
+    if (!history || history.length === 0) {
+      container.innerHTML = `<div class="empty-state text-center py-4 text-muted"><i class="fa-solid fa-clock-rotate-left fs-2 text-secondary opacity-50 mb-2"></i><p class="mb-0">No hay historial de contactos registrado.</p></div>`;
+      return;
+    }
+    const icons = { whatsapp: 'fa-brands fa-whatsapp whatsapp', llamada: 'fa-solid fa-phone llamada', email: 'fa-solid fa-envelope email', nota: 'fa-solid fa-pen-clip nota' };
+    let html = '';
+    history.forEach(log => {
+      const iconClass = icons[log.tipo_contacto] || 'fa-solid fa-circle';
+      html += `
+        <div class="timeline-item">
+          <div class="timeline-icon ${log.tipo_contacto}"><i class="${iconClass.split(' ')[0]} ${iconClass.split(' ')[1]}"></i></div>
+          <div class="timeline-date">${new Date(log.fecha_creacion).toLocaleString()}</div>
+          <div class="timeline-content"><strong>${log.tipo_contacto.toUpperCase()}:</strong> ${log.descripcion}</div>
+        </div>`;
+    });
+    container.innerHTML = html;
+  } catch (err) {
+    console.error(err);
+    const container = document.getElementById('detail-timeline-body');
+    if (container) container.innerHTML = `<div class="text-center py-4 text-danger"><i class="fa-solid fa-circle-exclamation me-1"></i> Error al cargar historial: ${err.message}</div>`;
+  }
 }
 
 // ─── SUB-TAB: DOCUMENTOS ──────────────────────────────────────────────────
 async function loadClientDocs() {
   tabLoadedStates['tab-docs'] = true;
-  const docs = await apiFetch(`/api/clients/${activeClientId}/attachments`);
-  const tbody = document.getElementById('detail-docs-body');
-  if (docs.length === 0) { tbody.innerHTML = `<tr><td colspan="4" class="text-center text-muted">No hay documentos cargados.</td></tr>`; return; }
-  let html = '';
-  docs.forEach(doc => {
-    html += `
-      <tr>
-        <td><strong>${doc.nombre_archivo}</strong></td>
-        <td><span class="badge bg-secondary">${doc.tipo_documento.toUpperCase()}</span></td>
-        <td>${new Date(doc.fecha_subida).toLocaleDateString()}</td>
-        <td><a href="${doc.ruta_archivo}" target="_blank" class="btn btn-sm btn-outline-primary"><i class="fa-solid fa-eye"></i> Ver</a></td>
-      </tr>`;
-  });
-  tbody.innerHTML = html;
+  showTableSkeleton('detail-docs-body', 4, 3);
+  try {
+    const docs = await apiFetch(`/api/clients/${activeClientId}/attachments`);
+    const tbody = document.getElementById('detail-docs-body');
+    if (!docs || docs.length === 0) {
+      showTableEmpty('detail-docs-body', 4, 'No hay documentos cargados.', 'fa-file-arrow-up');
+      return;
+    }
+    let html = '';
+    docs.forEach(doc => {
+      html += `
+        <tr>
+          <td><strong>${doc.nombre_archivo}</strong></td>
+          <td><span class="badge bg-secondary">${doc.tipo_documento.toUpperCase()}</span></td>
+          <td>${new Date(doc.fecha_subida).toLocaleDateString()}</td>
+          <td><a href="${doc.ruta_archivo}" target="_blank" class="btn btn-sm btn-outline-primary"><i class="fa-solid fa-eye"></i> Ver</a></td>
+        </tr>`;
+    });
+    tbody.innerHTML = html;
+  } catch (err) {
+    console.error(err);
+    showTableError('detail-docs-body', 4, 'Error al cargar documentos: ' + err.message, 'loadClientDocs()');
+  }
 }
 
 // ─── INICIALIZACIÓN DE EVENT LISTENERS ────────────────────────────────────

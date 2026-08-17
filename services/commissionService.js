@@ -16,7 +16,7 @@ async function getCommissionRate(compania, cobertura = '*') {
       FROM tasas_comision 
       WHERE compania = ? 
         AND (tipo_cobertura = ? OR tipo_cobertura = '*') 
-        AND activa = TRUE 
+        AND (activa = true OR activa = 'true' OR activa = '1') 
       ORDER BY CASE WHEN tipo_cobertura = ? THEN 1 ELSE 2 END 
       LIMIT 1
     `, [compania, cobertura, cobertura]);

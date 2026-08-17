@@ -4,16 +4,37 @@
 let allClaims = [];
 
 async function loadClaimsList() {
+  showTableSkeleton('claims-table-body', 8, 4);
   try {
     const data = await apiFetch('/api/claims');
     allClaims = data;
-    renderClaimsTable(data);
-  } catch (err) { console.error(err); }
+    filterClaims();
+  } catch (err) {
+    console.error(err);
+    showTableError('claims-table-body', 8, 'Error al cargar siniestros: ' + err.message, 'loadClaimsList()');
+  }
 }
 
-function renderClaimsTable(claims) {
+function filterClaims() {
+  const searchEl = document.getElementById('search-claim');
+  const term = searchEl ? searchEl.value.toLowerCase().trim() : '';
+  const filtered = !term ? allClaims : allClaims.filter(s => {
+    const num = (s.numero_siniestro || '').toLowerCase();
+    const cli = (s.cliente_nombre || '').toLowerCase();
+    const pat = (s.patente || '').toLowerCase();
+    const desc = (s.descripcion || '').toLowerCase();
+    return num.includes(term) || cli.includes(term) || pat.includes(term) || desc.includes(term);
+  });
+  renderClaimsTable(filtered, !!term);
+}
+
+function renderClaimsTable(claims, hasSearch = false) {
   const tbody = document.getElementById('claims-table-body');
-  if (claims.length === 0) { tbody.innerHTML = `<tr><td colspan="8" class="text-center py-4">No se encontraron siniestros.</td></tr>`; return; }
+  if (!claims || claims.length === 0) {
+    const msg = hasSearch ? 'No se encontraron siniestros que coincidan con la búsqueda.' : 'No hay siniestros reportados.';
+    showTableEmpty('claims-table-body', 8, msg, 'fa-car-burst');
+    return;
+  }
   let html = '';
   claims.forEach(s => {
     const pInfo = s.numero_poliza ? `${s.compania} | ${s.numero_poliza}` : 'Sin póliza';
@@ -32,3 +53,11 @@ async function updateClaimStatus(claimId, newStatus) {
     showToast('Estado del siniestro actualizado.', 'info');
   } catch (err) { showToast(err.message, 'danger'); }
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+  const searchClaim = document.getElementById('search-claim');
+  if (searchClaim) {
+    searchClaim.addEventListener('input', debounce(filterClaims, 300));
+  }
+});
+

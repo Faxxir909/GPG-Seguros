@@ -145,6 +145,13 @@
           <h1 id="panel-title">Dashboard</h1>
           <p id="panel-subtitle">Resumen en tiempo real de operaciones</p>
         </div>
+        <div class="header-search-bar mx-auto d-none d-md-flex align-items-center">
+          <button class="btn btn-light border d-flex align-items-center gap-3 px-3 py-2 text-muted shadow-2xs" id="btn-open-global-search" style="border-radius: 12px; width: 340px; font-size: 0.88rem;">
+            <i class="fa-solid fa-magnifying-glass text-primary"></i>
+            <span class="flex-grow-1 text-start">Buscar en GPG Seguros...</span>
+            <kbd class="bg-white border text-dark px-2 py-0.5 rounded shadow-2xs" style="font-size: 0.72rem;">Ctrl K</kbd>
+          </button>
+        </div>
         <div class="header-actions">
           <span class="badge bg-secondary px-3 py-2 rounded-3" id="current-date-badge">Hoy: --/--/----</span>
         </div>
@@ -229,10 +236,13 @@
           </div>
           <!-- Vencimientos -->
           <div class="col-lg-5">
-            <div class="app-card" style="height: 100%;">
-              <div class="app-card-title">Próximos Vencimientos</div>
-              <div class="table-responsive" style="max-height: 250px;">
-                <table class="table table-hover align-middle" style="font-size: 0.85rem;">
+            <div class="app-card d-flex flex-column" style="height: 100%; min-height: 380px;">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <div class="app-card-title mb-0">Próximos Vencimientos</div>
+                <span class="badge bg-primary-subtle text-primary border border-primary-subtle font-monospace small">Próximos 30 días</span>
+              </div>
+              <div class="table-responsive table-scrollable flex-grow-1 shadow-2xs">
+                <table class="table table-hover align-middle mb-0" style="font-size: 0.85rem;">
                   <thead>
                     <tr>
                       <th>Cliente</th>
@@ -523,7 +533,30 @@
             </div>
           </div>
 
-        <div class="table-responsive">
+          <!-- Filtros Rápidos de Vencimiento -->
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-3 p-2 bg-light rounded-3 border">
+            <span class="small text-muted fw-bold me-1"><i class="fa-solid fa-stopwatch text-primary me-1"></i>Filtro por Vencimiento:</span>
+            <button type="button" class="btn btn-sm btn-light border exp-filter-pill active fw-semibold shadow-xs" data-exp="all">
+              Todas
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-danger exp-filter-pill fw-semibold" data-exp="vencidas">
+              <i class="fa-solid fa-triangle-exclamation me-1"></i>Vencidas
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-danger exp-filter-pill fw-semibold" data-exp="7d">
+              <i class="fa-solid fa-fire me-1"></i>En ≤ 7 días
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-warning exp-filter-pill fw-semibold text-dark" data-exp="30d">
+              <i class="fa-solid fa-hourglass-half me-1"></i>En ≤ 30 días
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-info exp-filter-pill fw-semibold text-dark" data-exp="60d">
+              <i class="fa-solid fa-calendar-day me-1"></i>En ≤ 60 días
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-success exp-filter-pill fw-semibold" data-exp="vigentes">
+              <i class="fa-solid fa-circle-check me-1"></i>Vigentes (>60d)
+            </button>
+          </div>
+
+        <div class="table-responsive shadow-sm">
           <table class="table table-hover align-middle">
             <thead>
               <tr>
@@ -532,7 +565,9 @@
                 <th>Vehículo</th>
                 <th>Compañía</th>
                 <th>Cobertura</th>
-                <th>Fecha Vencimiento</th>
+                <th class="cursor-pointer user-select-none text-nowrap" id="th-sort-vencimiento" title="Clic para ordenar por fecha de vencimiento">
+                  Fecha Vencimiento <i class="fa-solid fa-sort ms-1 text-muted" id="icon-sort-vencimiento"></i>
+                </th>
                 <th>Monto</th>
                 <th>Estado</th>
                 <th>Acciones</th>
@@ -1072,7 +1107,7 @@
                 </select>
               </div>
               <div class="col-12">
-                <label for="cot-notas" class="form-label">Notas / Observaciones</label>
+                <label for="cot-notes" class="form-label">Notas / Observaciones</label>
                 <textarea class="form-control" id="cot-notes" rows="2" placeholder="Detalles de la comparativa de precios..."></textarea>
               </div>
             </div>
@@ -1667,6 +1702,107 @@
     </div>
   </div>
 
+  <!-- ==========================================
+       MODAL SPOTLIGHT SEARCH (Ctrl + K)
+       ========================================== -->
+  <div class="modal fade" id="modalGlobalSearch" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+      <div class="modal-content border-0 shadow-lg" style="border-radius: 20px; overflow: hidden; background: #fff;">
+        <div class="p-3 border-bottom d-flex align-items-center gap-3" style="background: #f8fafc;">
+          <i class="fa-solid fa-magnifying-glass fs-5 text-primary"></i>
+          <input type="text" id="global-search-input" class="form-control form-control-lg border-0 shadow-none bg-transparent" placeholder="Buscar por cliente, DNI/CUIT, póliza, patente, motor, siniestro..." autocomplete="off">
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="p-0 custom-scrollbar" style="max-height: 420px; overflow-y: auto;" id="global-search-results-wrap">
+          <div class="p-4 text-center text-muted" id="global-search-placeholder">
+            <i class="fa-solid fa-keyboard fs-2 mb-2 text-primary opacity-50"></i>
+            <p class="mb-0 small">Escribe al menos 2 caracteres o navega con las flechas del teclado.</p>
+          </div>
+          <div class="list-group list-group-flush" id="global-search-results-list"></div>
+        </div>
+        <div class="p-2 px-3 border-top bg-light d-flex justify-content-between align-items-center small text-muted">
+          <span><kbd class="bg-white border text-dark px-1.5 py-0.5 rounded">↑</kbd> <kbd class="bg-white border text-dark px-1.5 py-0.5 rounded">↓</kbd> para navegar</span>
+          <span><kbd class="bg-white border text-dark px-1.5 py-0.5 rounded">Enter</kbd> para seleccionar</span>
+          <span><kbd class="bg-white border text-dark px-1.5 py-0.5 rounded">ESC</kbd> para cerrar</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==========================================
+       MODAL PLAN DE COBRANZAS Y CUOTAS
+       ========================================== -->
+  <div class="modal fade" id="modalPlanCuotas" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+      <div class="modal-content border-0 shadow-lg" style="border-radius: 20px;">
+        <div class="modal-header bg-primary text-white" style="border-radius: 20px 20px 0 0;">
+          <h5 class="modal-title d-flex align-items-center gap-2 text-white">
+            <i class="fa-solid fa-credit-card"></i>
+            <span>Plan de Cobranzas y Cuotas</span>
+          </h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body p-4">
+          <!-- Header de la póliza -->
+          <div class="p-3 bg-light rounded-3 border mb-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <div>
+              <div class="fw-bold text-dark fs-6" id="cuotas-modal-cliente">--</div>
+              <div class="small text-muted" id="cuotas-modal-poliza-info">Póliza Nº -- | --</div>
+            </div>
+            <div class="text-end">
+              <div class="small text-muted">Monto Cuota</div>
+              <div class="fw-bold text-success fs-5" id="cuotas-modal-monto-cuota">$0.00</div>
+            </div>
+          </div>
+
+          <!-- Resumen de estado de cobranza -->
+          <div class="row g-2 mb-3 text-center">
+            <div class="col-4">
+              <div class="p-2 border rounded-3 bg-success-subtle text-success">
+                <div class="small fw-semibold">Cobradas</div>
+                <div class="fw-bold fs-6" id="cuotas-stat-cobradas">0 / 12</div>
+              </div>
+            </div>
+            <div class="col-4">
+              <div class="p-2 border rounded-3 bg-warning-subtle text-warning-emphasis">
+                <div class="small fw-semibold">Pendientes</div>
+                <div class="fw-bold fs-6" id="cuotas-stat-pendientes">0</div>
+              </div>
+            </div>
+            <div class="col-4">
+              <div class="p-2 border rounded-3 bg-danger-subtle text-danger">
+                <div class="small fw-semibold">En Mora</div>
+                <div class="fw-bold fs-6" id="cuotas-stat-mora">0</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tabla de cuotas -->
+          <div class="table-responsive table-scrollable" style="max-height: 280px;">
+            <table class="table table-hover align-middle mb-0" style="font-size: 0.88rem;">
+              <thead>
+                <tr>
+                  <th>Cuota</th>
+                  <th>Vencimiento</th>
+                  <th>Importe</th>
+                  <th>Estado</th>
+                  <th>Fecha Pago</th>
+                  <th>Acción</th>
+                </tr>
+              </thead>
+              <tbody id="cuotas-table-body">
+                <tr><td colspan="6" class="text-center py-3 text-muted">Cargando plan de cuotas...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="modal-footer bg-light" style="border-radius: 0 0 20px 20px;">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Chart.js CDN -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <!-- Bootstrap Bundle JS -->
@@ -1680,9 +1816,11 @@
   <script src="/js/siniestros.js"></script>  <!-- Siniestros -->
   <script src="/js/agenda.js"></script>      <!-- Agenda -->
   <script src="/js/comisiones.js"></script>  <!-- Comisiones -->
+  <script src="/js/cobranzas.js"></script>   <!-- Cobranzas y Cuotas -->
   <script src="/js/dashboard.js"></script>   <!-- Dashboard y gráficos -->
   <script src="/js/reportes.js"></script>    <!-- Reportes PDF/Excel -->
   <script src="/js/smartParser.js"></script> <!-- Carga Inteligente PDF -->
+  <script src="/js/globalSearch.js"></script><!-- Spotlight Ctrl+K -->
   <script src="/js/router.js"></script>      <!-- SPA Router + init (debe ir último) -->
 </body>
 </html>

@@ -532,7 +532,47 @@ body {
   border-radius: 16px;
   border: 1px solid var(--border-color);
   background-color: #fff;
-  overflow: hidden;
+  overflow-x: auto;
+}
+
+.table-scrollable {
+  max-height: 340px;
+  overflow-y: auto !important;
+  overflow-x: auto !important;
+  border-radius: 14px;
+}
+
+/* Custom Scrollbar moderna y elegante */
+.table-scrollable::-webkit-scrollbar,
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.table-scrollable::-webkit-scrollbar-track,
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 8px;
+}
+
+.table-scrollable::-webkit-scrollbar-thumb,
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 8px;
+}
+
+.table-scrollable::-webkit-scrollbar-thumb:hover,
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Sticky Header para tablas con scroll vertical */
+.table-scrollable table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background-color: #f8fafc !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 
 .table {
@@ -907,3 +947,92 @@ body {
 .timeline-item.skeleton .timeline-content {
   opacity: 0.8;
 }
+
+/* =========================================================================
+   PULSE ANIMATION FOR EXPIRATIONS & URGENCY
+   ========================================================================= */
+@keyframes pulseRed {
+  0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+  70% { transform: scale(1.04); box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+
+.pulse-badge {
+  animation: pulseRed 2s infinite ease-in-out;
+}
+
+.bg-danger-subtle {
+  background-color: #fee2e2 !important;
+  color: #991b1b !important;
+}
+
+.bg-warning-subtle {
+  background-color: #fef3c7 !important;
+  color: #92400e !important;
+}
+
+.bg-info-subtle {
+  background-color: #e0f2fe !important;
+  color: #075985 !important;
+}
+
+.bg-success-subtle {
+  background-color: #dcfce7 !important;
+  color: #166534 !important;
+}
+
+/* =========================================================================
+   EXPIRATION PILL FILTERS & ROW ACCENTS
+   ========================================================================= */
+.exp-filter-pill {
+  transition: all 0.2s ease-in-out;
+  border-radius: 20px !important;
+  padding: 0.35rem 0.85rem !important;
+  font-size: 0.82rem !important;
+}
+
+.exp-filter-pill:hover {
+  transform: translateY(-1px);
+}
+
+.exp-filter-pill.active {
+  font-weight: 700 !important;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08) !important;
+}
+
+.exp-filter-pill[data-exp="all"].active {
+  background-color: #0f172a !important;
+  color: #fff !important;
+  border-color: #0f172a !important;
+}
+
+.exp-filter-pill[data-exp="vencidas"].active {
+  background-color: #dc2626 !important;
+  color: #fff !important;
+  border-color: #dc2626 !important;
+}
+
+.exp-filter-pill[data-exp="7d"].active {
+  background-color: #ef4444 !important;
+  color: #fff !important;
+  border-color: #ef4444 !important;
+}
+
+.exp-filter-pill[data-exp="30d"].active {
+  background-color: #f59e0b !important;
+  color: #fff !important;
+  border-color: #f59e0b !important;
+}
+
+.exp-filter-pill[data-exp="60d"].active {
+  background-color: #0284c7 !important;
+  color: #fff !important;
+  border-color: #0284c7 !important;
+}
+
+.exp-filter-pill[data-exp="vigentes"].active {
+  background-color: #16a34a !important;
+  color: #fff !important;
+  border-color: #16a34a !important;
+}
+

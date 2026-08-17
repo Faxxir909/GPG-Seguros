@@ -12,6 +12,8 @@ const claimController = require('../controllers/claimController');
 const agendaController = require('../controllers/agendaController');
 const commissionController = require('../controllers/commissionController');
 const uploadController = require('../controllers/uploadController');
+const searchController = require('../controllers/searchController');
+const paymentController = require('../controllers/paymentController');
 
 // 1. AUTENTICACIÓN
 router.post('/auth/login', authController.login);
@@ -88,4 +90,13 @@ router.post('/commission-rates', checkRole(['admin']), commissionController.upse
 // 11. SUBIDA DE ARCHIVOS
 router.post('/upload', checkRole(['admin', 'productor', 'administrativo']), uploadController.uploadFile);
 
+// 12. BÚSQUEDA GLOBAL SPOTLIGHT (Ctrl + K)
+router.get('/search/global', checkRole(['admin', 'productor', 'administrativo']), searchController.globalSearch);
+
+// 13. COBRANZAS Y GESTIÓN DE CUOTAS
+router.get('/policies/:id/payments', checkRole(['admin', 'productor', 'administrativo']), paymentController.getPolicyInstallments);
+router.put('/payments/:id', checkRole(['admin', 'productor', 'administrativo']), paymentController.updateInstallment);
+router.get('/payments/summary', checkRole(['admin', 'productor', 'administrativo']), paymentController.getCollectionSummary);
+
 module.exports = router;
+

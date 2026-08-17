@@ -50,22 +50,22 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir);
 }
 
-// Middleware global de manejo de errores
-app.use((err, req, res, next) => {
-  console.error('[Global Error Handler]:', err.stack || err.message || err);
-  const status = err.status || 500;
-  const message = err.message || 'Error interno del servidor';
-  res.status(status).json({ error: message });
-});
-
 // Middleware de fallback para servir la SPA o error 404
-app.use((req, res) => {
+app.use((req, res, next) => {
   // Si solicitan algo que no es API, devolver el index.html principal
   if (!req.path.startsWith('/api')) {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
   } else {
     res.status(404).json({ error: 'Endpoint no encontrado' });
   }
+});
+
+// Middleware global de manejo de errores (debe ir ÚLTIMO)
+app.use((err, req, res, next) => {
+  console.error('[Global Error Handler]:', err.stack || err.message || err);
+  const status = err.status || 500;
+  const message = err.message || 'Error interno del servidor';
+  res.status(status).json({ error: message });
 });
 
 // Inicializar base de datos y levantar servidor

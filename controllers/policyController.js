@@ -116,7 +116,7 @@ async function renewPolicy(req, res, next) {
 
     const result = await db.run(`
       INSERT INTO polizas (numero_poliza, numero_renovacion, fecha_inicio, fecha_vencimiento, cobertura, estado, monto_total, valor_cuota, forma_pago, compania, cliente_id, vehiculo_id)
-      VALUES (?, ?, ?, ?, 'vigente', ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, 'vigente', ?, ?, ?, ?, ?, ?)
     `, [
       nuevoNumero,
       nuevoNumRen,
@@ -226,7 +226,7 @@ async function smartCreatePolicy(req, res, next) {
     if (!clienteId) {
       const newClientRes = await db.run(`
         INSERT INTO clientes (nombre, dni_cuit, telefono, email, direccion, localidad, provincia, estado, riesgo_baja)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'activo', 0)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'activo', false)
       `, [
         cliente.nombre,
         cliente.dni_cuit ? cliente.dni_cuit.trim() : `TEMP-${Date.now()}`,
@@ -332,10 +332,83 @@ function parseExcelDate(val) {
     const year = parts[2];
     return `${year}-${month}-${day}`;
   }
+  if (/^\d{1,2}-\d{1,2}-\d{4}$/.test(str)) {
+    const parts = str.split('-');
+    const day = parts[0].padStart(2, '0');
+    const month = parts[1].padStart(2, '0');
+    const year = parts[2];
+    return `${year}-${month}-${day}`;
+  }
   if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
     return str.substring(0, 10);
   }
   return str;
+}
+
+function parseExcelMoney(val) {
+  if (val === undefined || val === null || val === '') return 0;
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  let str = String(val).trim();
+  if (!str) return 0;
+
+  // Remover todo excepto dígitos, puntos, comas y signo menos
+  str = str.replace(/[^0-9.,-]/g, '');
+  if (!str || str === '-') return 0;
+
+  // Si tiene puntos y comas: ej '125.450,50' o '125,450.50'
+  if (str.includes('.') && str.includes(',')) {
+    const lastDot = str.lastIndexOf('.');
+    const lastComma = str.lastIndexOf(',');
+    if (lastComma > lastDot) {
+      // 125.450,50 -> punto es miles, coma es decimal
+      str = str.replace(/\./g, '').replace(',', '.');
+    } else {
+      // 125,450.50 -> coma es miles, punto es decimal
+      str = str.replace(/,/g, '');
+    }
+  } else if (str.includes(',')) {
+    // Solo tiene coma: ej '125450,50' o '150,00' o '1,250'
+    const parts = str.split(',');
+    if (parts.length === 2 && parts[1].length <= 2) {
+      // Coma decimal (ej: 125,50 o 1500,0)
+      str = str.replace(',', '.');
+    } else if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+      // Coma de miles (ej: 1,250 o 1,250,000)
+      str = str.replace(/,/g, '');
+    } else {
+      str = str.replace(',', '.');
+    }
+  } else if (str.includes('.')) {
+    // Solo tiene punto: ej '15.000' o '125.450' o '15.5'
+    const parts = str.split('.');
+    if (parts.length === 2 && parts[1].length === 3 && parseInt(parts[0]) > 0) {
+      // Punto de miles argentino típico (ej: 15.000, 85.500)
+      str = str.replace(/\./g, '');
+    } else if (parts.length > 2) {
+      // Múltiples puntos de miles (ej: 1.250.000)
+      str = str.replace(/\./g, '');
+    }
+  }
+
+  const num = parseFloat(str);
+  return isNaN(num) ? 0 : num;
+}
+
+function findRowValue(row, patterns) {
+  const keys = Object.keys(row);
+  for (const pattern of patterns) {
+    const key = keys.find(k => {
+      const trimmed = k.trim();
+      const withSpaces = trimmed.replace(/_/g, ' ');
+      const withUnderscores = trimmed.replace(/\s+/g, '_');
+      const collapsed = trimmed.replace(/[\s_.]+/g, '');
+      return pattern.test(trimmed) || pattern.test(withSpaces) || pattern.test(withUnderscores) || pattern.test(collapsed);
+    });
+    if (key && row[key] !== undefined && row[key] !== null && String(row[key]).trim() !== '') {
+      return row[key];
+    }
+  }
+  return undefined;
 }
 
 // Importar pólizas desde Excel
@@ -363,28 +436,36 @@ async function importPolicies(req, res, next) {
       return next(error);
     }
 
-    const sheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[sheetName];
-    let jsonData = XLSX.utils.sheet_to_json(worksheet);
+    let allRows = [];
+    for (const sheetName of workbook.SheetNames) {
+      const worksheet = workbook.Sheets[sheetName];
+      if (!worksheet) continue;
 
-    // Auto-detectar la fila de encabezados si hay filas de título arriba
-    if (jsonData.length === 0 || !jsonData.some(row => row['Póliza'] || row['Nº Póliza'] || row['numero_poliza'] || row['Tomador'] || row['Cliente'])) {
-      const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-      const headerIndex = rawRows.findIndex(r => Array.isArray(r) && r.length >= 3 && r.some(cell => typeof cell === 'string' && /^(Póliza|Nº Póliza|Poliza|Nro Póliza|Tomador|Cliente|Rama)$/i.test(cell.trim())));
-      if (headerIndex !== -1) {
-        const headers = rawRows[headerIndex];
-        jsonData = rawRows.slice(headerIndex + 1).filter(r => r && r.length > 1).map(r => {
-          const obj = {};
-          headers.forEach((h, i) => {
-            if (h && r[i] !== undefined) obj[h] = r[i];
+      let sheetData = XLSX.utils.sheet_to_json(worksheet);
+
+      // Auto-detectar la fila de encabezados si hay filas de título arriba
+      if (sheetData.length === 0 || !sheetData.some(row => findRowValue(row, [/p[oó]liza/i, /tomador/i, /asegurado/i, /cliente/i, /patente/i, /dominio/i, /seccion/i, /ramo/i]))) {
+        const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+        const headerIndex = rawRows.findIndex(r => Array.isArray(r) && r.length >= 2 && r.some(cell => typeof cell === 'string' && /^(Póliza|Nº Póliza|Poliza|Nro Póliza|Nro_Poliza|Tomador|Cliente|Rama|Ramo|Seccion|Sección|Asegurado|Patente|Dominio)$/i.test(cell.trim())));
+        if (headerIndex !== -1) {
+          const headers = rawRows[headerIndex];
+          sheetData = rawRows.slice(headerIndex + 1).filter(r => r && r.length > 1).map(r => {
+            const obj = {};
+            headers.forEach((h, i) => {
+              if (h && r[i] !== undefined) obj[String(h).trim()] = r[i];
+            });
+            return obj;
           });
-          return obj;
-        });
+        }
+      }
+
+      if (sheetData && sheetData.length > 0) {
+        allRows.push(...sheetData);
       }
     }
 
-    if (!jsonData || !jsonData.length) {
-      const error = new Error('El archivo Excel está vacío o no tiene un formato válido.');
+    if (!allRows || !allRows.length) {
+      const error = new Error('El archivo Excel está vacío o no tiene un formato reconocido.');
       error.status = 400;
       return next(error);
     }
@@ -393,9 +474,56 @@ async function importPolicies(req, res, next) {
     let actualizadas = 0;
     let omitidas = 0;
 
-    for (const row of jsonData) {
-      const numero_poliza = row['Nº Póliza'] || row['Póliza'] || row['Poliza'] || row['Nro Póliza'] || row['Nro Poliza'] || row['Número de Póliza'] || row['numero_poliza'] || row['PÓLIZA'];
-      let cliente_nombre = row['Cliente'] || row['Nombre'] || row['Tomador'] || row['Asegurado'] || row['cliente'] || row['Nombre y Apellido'];
+    const seccionMap = {
+      '1': 'Automotores',
+      '01': 'Automotores',
+      '2': 'Motovehículos',
+      '02': 'Motovehículos',
+      '3': 'Incendio',
+      '03': 'Incendio',
+      '4': 'Cristales',
+      '04': 'Cristales',
+      '5': 'Transporte',
+      '05': 'Transporte',
+      '6': 'Responsabilidad Civil',
+      '06': 'Responsabilidad Civil',
+      '8': 'Combinado Familiar',
+      '08': 'Combinado Familiar',
+      '9': 'Integral de Comercio',
+      '09': 'Integral de Comercio',
+      '10': 'Accidentes Personales',
+      '11': 'Vida Colectivo',
+      '14': 'Seguro Técnico',
+      '18': 'Vida Individual',
+      '19': 'Sepelio',
+      '21': 'Caución'
+    };
+
+    for (const row of allRows) {
+      const numero_poliza = findRowValue(row, [
+        /^N[º°o\._]?\s*P[óo]liza$/i,
+        /^P[óo]liza$/i,
+        /^Nro_?Poliza$/i,
+        /^Certificado$/i,
+        /^Nro_?Certificado$/i,
+        /^Propuesta$/i,
+        /^Nro_?Propuesta$/i,
+        /p[oó]liza/i
+      ]);
+
+      let cliente_nombre = findRowValue(row, [
+        /^Asegurado$/i,
+        /^Tomador$/i,
+        /^Nombre_?Asegurado$/i,
+        /^Cliente$/i,
+        /^Nombre(\s+y\s+Apellido)?$/i,
+        /^Nombre_?Completo$/i,
+        /^Razon_?Social$/i,
+        /^Razón_?Social$/i,
+        /asegurado/i,
+        /tomador/i,
+        /cliente/i
+      ]);
 
       if (!numero_poliza || !cliente_nombre) {
         omitidas++;
@@ -404,67 +532,215 @@ async function importPolicies(req, res, next) {
 
       const numPolStr = String(numero_poliza).trim();
       let nombreStr = String(cliente_nombre).trim();
-      let dniStr = null;
-
-      // Si el tomador viene en formato "1116571 - BERGIA, JORGE FABIAN"
+      // Si el tomador viene en formato "1116571 - BERGIA, JORGE FABIAN" o "BERGIA, JORGE FABIAN"
       if (nombreStr.includes(' - ')) {
         const parts = nombreStr.split(' - ');
-        dniStr = parts[0].trim();
         let rawName = parts.slice(1).join(' - ').trim();
         if (rawName.includes(',')) {
           const nameParts = rawName.split(',');
           rawName = `${nameParts[1].trim()} ${nameParts[0].trim()}`;
         }
-        nombreStr = rawName;
+        nombreStr = rawName || nombreStr;
+      } else if (nombreStr.includes(',')) {
+        const nameParts = nombreStr.split(',');
+        nombreStr = `${nameParts[1].trim()} ${nameParts[0].trim()}`;
       }
 
-      if (!dniStr) {
-        let dni_cuit = row['DNI/CUIT'] || row['DNI'] || row['CUIT'] || row['Documento'] || row['dni_cuit'] || row['dni'] || row['cuit'] || null;
-        dniStr = dni_cuit ? String(dni_cuit).trim() : null;
+      // Buscar columna explícita de DNI / CUIT / Documento
+      const dniCol = findRowValue(row, [
+        /^Nro[\s_\.]*Doc(umento)?$/i,
+        /^N[º°o\.]?[\s_\.]*Doc(umento)?$/i,
+        /^N[úu]m(ero)?[\s_\.]*Doc(umento)?$/i,
+        /^Doc(umento)?[\s_\.]*Nro$/i,
+        /^Documento$/i,
+        /^Doc$/i,
+        /^DNI$/i,
+        /^D\.N\.I\.?$/i,
+        /^CUIT$/i,
+        /^C\.U\.I\.T\.?$/i,
+        /^CUIL$/i,
+        /^C\.U\.I\.L\.?$/i,
+        /^DNI[\/\s_\.-]*CUIT$/i,
+        /^CUIT[\/\s_\.-]*DNI$/i,
+        /^CUIT[\/\s_\.-]*CUIL$/i,
+        /^CUIL[\/\s_\.-]*CUIT$/i,
+        /^Identificaci[óo]n$/i,
+        /^Nro[\s_\.]*Identificaci[óo]n$/i,
+        /^Tomador[\s_\.]*Doc$/i,
+        /^Asegurado[\s_\.]*Doc$/i,
+        /cuit/i,
+        /cuil/i,
+        /dni/i,
+        /documento/i,
+        /doc/i
+      ]);
+
+      if (dniCol) {
+        dniStr = String(dniCol).trim().replace(/[^0-9-]/g, '');
       }
 
-      const compania = String(row['Compañía'] || row['Compañia'] || row['Aseguradora'] || row['compania'] || row['COMPAÑÍA'] || 'Sancor Seguros').trim();
-      const cobertura = String(row['Cobertura'] || row['Plan'] || row['Ramo'] || row['cobertura'] || 'Cobertura Completa').trim();
-      
-      const fecha_inicio_raw = row['Fecha Inicio'] || row['Inicio vigencia póliza'] || row['Vigencia Desde'] || row['Desde'] || row['fecha_inicio'] || null;
-      const fecha_vencimiento_raw = row['Fecha Vencimiento'] || row['Fin vigencia póliza'] || row['Vigencia Hasta'] || row['Hasta'] || row['Vencimiento'] || row['fecha_vencimiento'] || null;
-      
+      const companiaRaw = findRowValue(row, [
+        /^Compa[ñn][íi]a$/i,
+        /^Aseguradora$/i,
+        /^Entidad$/i,
+        /compa[ñn][íi]a/i,
+        /aseguradora/i
+      ]);
+      let compania = 'El Norte Seguros';
+      if (companiaRaw) {
+        const cStr = String(companiaRaw).trim();
+        if (/norte/i.test(cStr)) compania = 'El Norte Seguros';
+        else if (/sancor/i.test(cStr)) compania = 'Sancor Seguros';
+        else if (/federaci[oó]n|patronal/i.test(cStr)) compania = 'Federación Patronal';
+        else if (/segunda/i.test(cStr)) compania = 'La Segunda';
+        else if (/zurich/i.test(cStr)) compania = 'Zurich';
+        else if (/rivadavia/i.test(cStr)) compania = 'Rivadavia';
+        else if (/crist[oó]bal/i.test(cStr)) compania = 'San Cristóbal';
+        else if (/allianz/i.test(cStr)) compania = 'Allianz';
+        else if (/mercantil/i.test(cStr)) compania = 'Mercantil Andina';
+        else if (/mapfre/i.test(cStr)) compania = 'Mapfre';
+        else if (/berkley/i.test(cStr)) compania = 'Berkley';
+        else compania = cStr;
+      }
+
+      const coberturaRaw = findRowValue(row, [
+        /^Cobertura$/i,
+        /^Detalle_?Cobertura$/i,
+        /^Plan$/i,
+        /^Seccion$/i,
+        /^Sección$/i,
+        /^Ramo$/i,
+        /^Rama$/i,
+        /^Tipo\s*(de\s*)?Cobertura$/i,
+        /cobertura/i,
+        /seccion/i,
+        /ramo/i
+      ]);
+      let cobertura = String(coberturaRaw || 'Cobertura Completa').trim();
+      if (seccionMap[cobertura]) {
+        cobertura = seccionMap[cobertura];
+      } else if (cobertura.toLowerCase() === 'automotores') {
+        cobertura = 'Automotores';
+      }
+
+      const fecha_inicio_raw = findRowValue(row, [
+        /^Vig_?Desde$/i,
+        /^Vigencia_?Desde$/i,
+        /^Fec_?Desde$/i,
+        /^Fecha_?Desde$/i,
+        /^Fecha\s*Inicio$/i,
+        /^Inicio\s*(Vigencia(\s*P[óo]liza)?)?$/i,
+        /^Desde$/i,
+        /^Fec_?Emisi[óo]n$/i,
+        /^Fecha\s*Emisi[óo]n$/i,
+        /inicio/i,
+        /desde/i
+      ]);
+
+      const fecha_vencimiento_raw = findRowValue(row, [
+        /^Vig_?Hasta$/i,
+        /^Vigencia_?Hasta$/i,
+        /^Fec_?Hasta$/i,
+        /^Fecha_?Hasta$/i,
+        /^Fecha\s*Vencimiento$/i,
+        /^Fin\s*(Vigencia(\s*P[óo]liza)?)?$/i,
+        /^Hasta$/i,
+        /^Vencimiento$/i,
+        /vencimiento/i,
+        /hasta/i,
+        /fin/i
+      ]);
+
       const fecha_inicio = parseExcelDate(fecha_inicio_raw);
       let fecha_vencimiento = parseExcelDate(fecha_vencimiento_raw);
-      
+
       if (!fecha_vencimiento_raw) {
         const d = new Date(fecha_inicio);
         d.setFullYear(d.getFullYear() + 1);
         fecha_vencimiento = d.toISOString().substring(0, 10);
       }
 
-      let monto_total = parseFloat(String(row['Monto Total'] || row['Premio Total'] || row['Premio'] || row['Monto'] || row['monto_total'] || row['Importe Total'] || row['Importe'] || 0).replace(/[^0-9\.]/g, '')) || 0;
-      let valor_cuota = parseFloat(String(row['Valor Cuota'] || row['Cuota'] || row['Importe Cuota'] || row['valor_cuota'] || row['Cuota Mensual'] || row['Valor de Cuota'] || 0).replace(/[^0-9\.]/g, '')) || 0;
+      // Extracción de montos (Premio Total, Prima, Cuota, etc.)
+      const montoTotalRaw = findRowValue(row, [
+        /^Premio_?Total$/i,
+        /^Premio_?Pesos$/i,
+        /^Premio_?Emitido$/i,
+        /^Premio_?Final$/i,
+        /^Premio(\s*\$)?$/i,
+        /^Prima_?Total$/i,
+        /^Prima_?Pura$/i,
+        /^Prima_?Emitida$/i,
+        /^Prima$/i,
+        /^Monto_?Total$/i,
+        /^Monto$/i,
+        /^Importe_?Total$/i,
+        /^Importe$/i,
+        /^Total(\s*\$)?$/i,
+        /premio/i,
+        /monto/i
+      ]);
+
+      const valorCuotaRaw = findRowValue(row, [
+        /^Imp_?Cuota$/i,
+        /^Importe_?Cuota$/i,
+        /^Valor_?Cuota$/i,
+        /^Cuota_?Actual$/i,
+        /^Cuota_?1$/i,
+        /^Cuota(\s*Mensual|\s*Total|\s*Actual|\s*\$)?$/i,
+        /^Valor\s*(de\s*)?Cuota$/i,
+        /^Imp\.?\s*Cuota$/i,
+        /cuota/i
+      ]);
+
+      const cantCuotasRaw = findRowValue(row, [
+        /^Cant_?Cuotas$/i,
+        /^Cantidad_?Cuotas$/i,
+        /^Cant_?Cuota$/i,
+        /^Cuotas$/i,
+        /^Plan_?Pago$/i,
+        /^Plan_?Cuotas$/i
+      ]);
+      const cantCuotas = cantCuotasRaw ? parseInt(String(cantCuotasRaw).replace(/[^0-9]/g, '')) || 0 : 0;
+
+      let monto_total = parseExcelMoney(montoTotalRaw);
+      let valor_cuota = parseExcelMoney(valorCuotaRaw);
 
       if (valor_cuota === 0 && monto_total > 0) {
-        valor_cuota = monto_total;
+        if (cantCuotas > 1) {
+          valor_cuota = Math.round((monto_total / cantCuotas) * 100) / 100;
+        } else {
+          valor_cuota = monto_total;
+        }
       }
       if (monto_total === 0 && valor_cuota > 0) {
-        monto_total = valor_cuota;
+        monto_total = valor_cuota * (cantCuotas > 0 ? cantCuotas : 1);
       }
 
-      let forma_pago = String(row['Medio de Pago'] || row['Forma de Pago'] || row['Pago'] || row['forma_pago'] || 'debito_automatico').trim();
-      if (forma_pago.toLowerCase().includes('débito') || forma_pago.toLowerCase().includes('debito')) {
+      let forma_pago = String(findRowValue(row, [/^Forma_?Pago$/i, /^Medio_?Pago$/i, /^Tipo_?Cobranza$/i, /^Cobranza$/i, /^CBU$/i, /^Tarjeta$/i, /^Tipo_?Pago$/i]) || 'debito_automatico').trim();
+      if (forma_pago.toLowerCase().includes('débito') || forma_pago.toLowerCase().includes('debito') || forma_pago.toLowerCase().includes('cbu') || forma_pago.toLowerCase().includes('ahorro')) {
         forma_pago = 'debito_automatico';
-      } else if (forma_pago.toLowerCase().includes('cupon') || forma_pago.toLowerCase().includes('efectivo')) {
+      } else if (forma_pago.toLowerCase().includes('cupon') || forma_pago.toLowerCase().includes('efectivo') || forma_pago.toLowerCase().includes('rapipago') || forma_pago.toLowerCase().includes('pagofacil')) {
         forma_pago = 'efectivo';
-      } else if (forma_pago.toLowerCase().includes('credito') || forma_pago.toLowerCase().includes('crédito')) {
+      } else if (forma_pago.toLowerCase().includes('credito') || forma_pago.toLowerCase().includes('crédito') || forma_pago.toLowerCase().includes('tarjeta') || forma_pago.toLowerCase().includes('visa') || forma_pago.toLowerCase().includes('master')) {
         forma_pago = 'tarjeta_credito';
+      } else if (forma_pago.toLowerCase().includes('transfer')) {
+        forma_pago = 'transferencia';
       }
 
-      const telefono = row['Teléfonos'] || row['Teléfono'] || row['Telefono'] || row['telefono'] || row['Tel'] || null;
-      const email = row['Email'] || row['email'] || row['Correo'] || null;
-      const direccion = row['Domicilio'] || row['Dirección'] || row['Direccion'] || row['direccion'] || null;
-      const localidad = row['Localidad'] || row['localidad'] || row['Ciudad'] || null;
-      const provincia = row['Provincia'] || row['provincia'] || 'Córdoba';
+      const estadoRaw = findRowValue(row, [/^Estado_?Poliza$/i, /^Estado$/i, /^Situacion$/i, /^Situación$/i]);
+      let estadoPoliza = 'vigente';
+      if (estadoRaw && /vencid|anulad|baja|cancelad/i.test(String(estadoRaw))) {
+        estadoPoliza = /anulad|baja/i.test(String(estadoRaw)) ? 'anulada' : 'vencida';
+      }
 
-      let motor = row['Motor'] || row['Nº Motor'] || row['N° Motor'] || row['Número de Motor'] || row['Numero Motor'] || row['motor'] || row['Nro Motor'] || null;
-      let chasis = row['Chasis'] || row['Nº Chasis'] || row['N° Chasis'] || row['Número de Chasis'] || row['Numero Chasis'] || row['chasis'] || row['Nro Chasis'] || null;
+      const telefono = findRowValue(row, [/^Tel[ée]fonos?$/i, /^Celular$/i, /^M[óo]vil$/i, /^Tel$/i, /^Contacto$/i]);
+      const email = findRowValue(row, [/^Mail$/i, /^E-?mail$/i, /^Correo(\s*Electr[óo]nico)?$/i]);
+      const direccion = findRowValue(row, [/^Direcci[óo]n$/i, /^Domicilio$/i, /^Calle$/i]);
+      const localidad = findRowValue(row, [/^Localidad$/i, /^Ciudad$/i, /^Pueblo$/i]);
+      const provincia = findRowValue(row, [/^Provincia$/i]) || 'Córdoba';
+
+      let motor = findRowValue(row, [/^Nro_?Motor$/i, /^N[º°o\.]?\s*Motor$/i, /^Motor$/i]);
+      let chasis = findRowValue(row, [/^Nro_?Chasis$/i, /^N[º°o\.]?\s*Chasis$/i, /^Chasis$/i]);
 
       // 1. Buscar o crear cliente
       let clienteId = null;
@@ -472,6 +748,23 @@ async function importPolicies(req, res, next) {
         const existingClient = await db.get('SELECT id FROM clientes WHERE dni_cuit = ?', [dniStr]);
         if (existingClient) {
           clienteId = existingClient.id;
+          // Actualizar datos de contacto si vinieron en el Excel
+          await db.run(`
+            UPDATE clientes SET
+              telefono = COALESCE(?, telefono),
+              email = COALESCE(?, email),
+              direccion = COALESCE(?, direccion),
+              localidad = COALESCE(?, localidad),
+              provincia = COALESCE(?, provincia)
+            WHERE id = ?
+          `, [
+            telefono ? String(telefono).trim() : null,
+            email ? String(email).trim() : null,
+            direccion ? String(direccion).trim() : null,
+            localidad ? String(localidad).trim() : null,
+            provincia ? String(provincia).trim() : null,
+            clienteId
+          ]);
         }
       }
 
@@ -479,16 +772,19 @@ async function importPolicies(req, res, next) {
         const existingByName = await db.get('SELECT id FROM clientes WHERE LOWER(nombre) = LOWER(?)', [nombreStr]);
         if (existingByName) {
           clienteId = existingByName.id;
+          if (dniStr && !existingByName.dni_cuit.startsWith('TEMP-')) {
+            await db.run('UPDATE clientes SET dni_cuit = COALESCE(?, dni_cuit) WHERE id = ?', [dniStr, clienteId]);
+          }
         }
       }
 
       if (!clienteId) {
         const newClientRes = await db.run(`
           INSERT INTO clientes (nombre, dni_cuit, telefono, email, direccion, localidad, provincia, estado, riesgo_baja)
-          VALUES (?, ?, ?, ?, ?, ?, ?, 'activo', 0)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 'activo', false)
         `, [
           nombreStr,
-          dniStr || `TEMP-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          dniStr || `CLI-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
           telefono ? String(telefono).trim() : null,
           email ? String(email).trim() : null,
           direccion ? String(direccion).trim() : null,
@@ -500,12 +796,12 @@ async function importPolicies(req, res, next) {
 
       // 2. Vehículo opcional
       let vehiculoId = null;
-      let patente = row['Patente'] || row['Dominio'] || row['patente'] || null;
-      let marca = row['Marca'] || row['marca'] || null;
-      let modelo = row['Modelo'] || row['modelo'] || null;
-      let anio = row['Año'] || row['Anio'] || row['anio'] || null;
+      let patente = findRowValue(row, [/^Dominio$/i, /^Nro_?Dominio$/i, /^Patente$/i]);
+      let marca = findRowValue(row, [/^Marca$/i]);
+      let modelo = findRowValue(row, [/^Modelo$/i, /^Modelo\/Versi[óo]n$/i, /^Descripcion_?Vehiculo$/i, /^Descripción_?Vehículo$/i, /^Vehiculo$/i, /^Vehículo$/i]);
+      let anio = findRowValue(row, [/^A[ñn]o$/i, /^Modelo_?A[ñn]o$/i, /^Anio$/i, /^Ano$/i]);
 
-      const bienAsegurado = row['Bien Asegurado'] || row['Vehículo'] || row['Vehiculo'] || null;
+      const bienAsegurado = findRowValue(row, [/^Bien\s*Asegurado$/i, /^Veh[íi]culo$/i, /^Unidad$/i]);
       if (bienAsegurado && typeof bienAsegurado === 'string') {
         if (bienAsegurado.includes('|')) {
           const bParts = bienAsegurado.split('|');
@@ -519,9 +815,9 @@ async function importPolicies(req, res, next) {
           marca = 'General';
         }
 
-        const mMot = bienAsegurado.match(/(?:Motor|MOT|M)\s*:?\s*([A-Z0-9-]+)/i);
+        const mMot = bienAsegurado.match(/\b(?:Motor|Nro\.?\s*Motor|MOT)\s*[:#]?\s*([A-Z0-9-]+)/i);
         if (mMot && !motor) motor = mMot[1];
-        const mCha = bienAsegurado.match(/(?:Chasis|CHA|C)\s*:?\s*([A-Z0-9]{8,20})/i);
+        const mCha = bienAsegurado.match(/\b(?:Chasis|Nro\.?\s*Chasis|VIN)\s*[:#]?\s*([A-Z0-9]{8,20})/i);
         if (mCha && !chasis) chasis = mCha[1];
       }
 
@@ -531,11 +827,22 @@ async function importPolicies(req, res, next) {
           const existingVeh = await db.get('SELECT id FROM vehiculos WHERE patente = ?', [cleanPat]);
           if (existingVeh) {
             vehiculoId = existingVeh.id;
-            if (motor || chasis) {
-              await db.run(`
-                UPDATE vehiculos SET motor = COALESCE(?, motor), chasis = COALESCE(?, chasis) WHERE id = ?
-              `, [motor ? String(motor).trim() : null, chasis ? String(chasis).trim() : null, vehiculoId]);
-            }
+            await db.run(`
+              UPDATE vehiculos SET
+                marca = COALESCE(?, marca),
+                modelo = COALESCE(?, modelo),
+                motor = COALESCE(?, motor),
+                chasis = COALESCE(?, chasis),
+                anio = COALESCE(?, anio)
+              WHERE id = ?
+            `, [
+              marca ? String(marca).trim() : null,
+              modelo ? String(modelo).trim() : null,
+              motor ? String(motor).trim() : null,
+              chasis ? String(chasis).trim() : null,
+              anio ? parseInt(anio) : null,
+              vehiculoId
+            ]);
           }
         }
         if (!vehiculoId) {
@@ -565,7 +872,7 @@ async function importPolicies(req, res, next) {
             fecha_inicio = ?,
             fecha_vencimiento = ?,
             cobertura = ?,
-            estado = 'vigente',
+            estado = ?,
             monto_total = ?,
             valor_cuota = ?,
             forma_pago = ?,
@@ -577,6 +884,7 @@ async function importPolicies(req, res, next) {
           fecha_inicio,
           fecha_vencimiento,
           cobertura,
+          estadoPoliza,
           monto_total,
           valor_cuota,
           forma_pago,
@@ -588,7 +896,8 @@ async function importPolicies(req, res, next) {
         actualizadas++;
 
         const tasa = await getCommissionRate(compania, cobertura);
-        const montoComision = valor_cuota * tasa;
+        const baseMonto = valor_cuota > 0 ? valor_cuota : monto_total;
+        const montoComision = Math.round((baseMonto * tasa) * 100) / 100;
         const periodo = fecha_inicio.substring(0, 7);
 
         const existingCom = await db.get('SELECT id FROM comisiones WHERE poliza_id = ?', [existingPol.id]);
@@ -597,22 +906,23 @@ async function importPolicies(req, res, next) {
             UPDATE comisiones SET
               compania = ?, monto_poliza = ?, tasa_comision = ?, monto_comision = ?, periodo = ?
             WHERE id = ?
-          `, [compania, monto_total, tasa, montoComision, periodo, existingCom.id]);
+          `, [compania, monto_total || valor_cuota, tasa, montoComision, periodo, existingCom.id]);
         } else {
           await db.run(`
             INSERT INTO comisiones (poliza_id, compania, monto_poliza, tasa_comision, monto_comision, estado_pago, periodo)
             VALUES (?, ?, ?, ?, ?, 'pendiente', ?)
-          `, [existingPol.id, compania, monto_total, tasa, montoComision, periodo]);
+          `, [existingPol.id, compania, monto_total || valor_cuota, tasa, montoComision, periodo]);
         }
       } else {
         const polRes = await db.run(`
           INSERT INTO polizas (numero_poliza, numero_renovacion, fecha_inicio, fecha_vencimiento, cobertura, estado, monto_total, valor_cuota, forma_pago, compania, cliente_id, vehiculo_id)
-          VALUES (?, 0, ?, ?, ?, 'vigente', ?, ?, ?, ?, ?, ?)
+          VALUES (?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [
           numPolStr,
           fecha_inicio,
           fecha_vencimiento,
           cobertura,
+          estadoPoliza,
           monto_total,
           valor_cuota,
           forma_pago,
@@ -623,13 +933,14 @@ async function importPolicies(req, res, next) {
         insertadas++;
 
         const tasa = await getCommissionRate(compania, cobertura);
-        const montoComision = valor_cuota * tasa;
+        const baseMonto = valor_cuota > 0 ? valor_cuota : monto_total;
+        const montoComision = Math.round((baseMonto * tasa) * 100) / 100;
         const periodo = fecha_inicio.substring(0, 7);
 
         await db.run(`
           INSERT INTO comisiones (poliza_id, compania, monto_poliza, tasa_comision, monto_comision, estado_pago, periodo)
           VALUES (?, ?, ?, ?, ?, 'pendiente', ?)
-        `, [polRes.id, compania, monto_total, tasa, montoComision, periodo]);
+        `, [polRes.id, compania, monto_total || valor_cuota, tasa, montoComision, periodo]);
       }
     }
 

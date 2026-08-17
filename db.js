@@ -19,16 +19,22 @@ let sqliteDb = null;
 if (isPgEnv) {
   const { Pool } = require('pg');
   const poolConfig = { max: 10, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 };
+  const isLocalHost = (dbUrl && (dbUrl.includes('localhost') || dbUrl.includes('127.0.0.1'))) || (pgHost === 'localhost' || pgHost === '127.0.0.1');
+
   if (dbUrl) {
     poolConfig.connectionString = dbUrl;
-    poolConfig.ssl = { rejectUnauthorized: false };
+    if (!isLocalHost) {
+      poolConfig.ssl = { rejectUnauthorized: false };
+    }
   } else {
     poolConfig.host = pgHost;
     poolConfig.port = parseInt(process.env.PGPORT || process.env.PG_PORT || '5432');
     poolConfig.user = process.env.PGUSER || process.env.PG_USER || 'postgres';
     poolConfig.password = process.env.PGPASSWORD || process.env.PG_PASSWORD || '';
     poolConfig.database = process.env.PGDATABASE || process.env.PG_DATABASE || 'gpg_seguros';
-    poolConfig.ssl = { rejectUnauthorized: false };
+    if (!isLocalHost) {
+      poolConfig.ssl = { rejectUnauthorized: false };
+    }
   }
   pool = new Pool(poolConfig);
   pool.on('error', (err) => console.error('PostgreSQL pool error:', err));
@@ -281,6 +287,20 @@ async function initSqliteTables() {
         creado_en      DATETIME DEFAULT CURRENT_TIMESTAMP,
         UNIQUE (compania, tipo_cobertura)
     );
+    CREATE TABLE IF NOT EXISTS cuotas_cobranza (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        poliza_id         INTEGER NOT NULL,
+        numero_cuota      INTEGER NOT NULL,
+        total_cuotas      INTEGER NOT NULL DEFAULT 12,
+        fecha_vencimiento DATE NOT NULL,
+        monto             REAL NOT NULL,
+        estado            TEXT NOT NULL DEFAULT 'pendiente',
+        fecha_pago        DATE,
+        forma_pago        TEXT,
+        notas             TEXT,
+        creado_en         DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (poliza_id, numero_cuota)
+    );
   `;
   return new Promise((resolve, reject) => {
     sqliteDb.exec(ddl, (err) => {
@@ -298,6 +318,7 @@ async function seedTasasComision() {
         INSERT INTO tasas_comision (compania, tipo_cobertura, tasa, descripcion) VALUES
           ('Federación Patronal', '*', 0.1500, 'Tasa genérica Federación Patronal'),
           ('Sancor Seguros', '*', 0.1500, 'Tasa genérica Sancor'),
+          ('El Norte Seguros', '*', 0.1500, 'Tasa genérica El Norte Seguros'),
           ('La Segunda', '*', 0.1200, 'Tasa genérica La Segunda'),
           ('Zurich', '*', 0.1400, 'Tasa genérica Zurich'),
           ('Rivadavia', '*', 0.1300, 'Tasa genérica Rivadavia'),

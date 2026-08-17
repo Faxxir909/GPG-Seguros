@@ -1,40 +1,18 @@
 # TODO - Performance & UX (GPG Seguros)
 
 ## Completado
-- [ ] Confirmado: NO se aplicaron cambios reales todavía
-
-
-## Pendiente (aplicar cambios reales)
-1. Debounce en búsquedas
-   - Cambiar `keyup` por `input`.
-   - Implementar debounce 300-400ms para:
-     - `#search-client`
-     - `#search-policy`
-
-2. Paginación: listener estable
-   - Evitar `addEventListener('pagechange', ..., { once: true })` recreado en cada render.
-   - Dejar listener una sola vez y reutilizar.
-
-3. Render de tablas más eficiente
-   - Reducir `tbody.innerHTML += ...` en loops.
-   - Construir una sola string o `DocumentFragment` y asignar una vez.
-   - Aplicar en:
-     - renderClientes
-     - renderPolicies
-     - renderClaimsTable
-     - loadClientVehicles
-     - loadClientPolicies
-
-4. Carga bajo demanda / skeletons en ficha
-   - `openClientDetail()` actualmente dispara 5 calls.
-   - Introducir loading por sub-tab y/o lazy-load.
-
-5. Robustez de `apiFetch`
-   - Asegurar parse seguro del body de error (no asumir JSON).
+- [x] Skeletons visuales (shimmer) antes de cada petición de datos en todos los módulos (Dashboard, Clientes, Pólizas, Cotizaciones, Siniestros, Agenda, Comisiones).
+- [x] Estados vacíos estilizados (`showTableEmpty`) con iconos informativos cuando no hay datos o no hay coincidencias de búsqueda.
+- [x] Manejo de errores con botón "Reintentar" (`showTableError`) ante fallas de conexión o API.
+- [x] Debounce (300-350ms) en todas las barras de búsqueda y filtros para evitar renders innecesarios.
+- [x] Paginación con listener estable sin fugas ni recreaciones continuas.
+- [x] Render eficiente de tablas asignando una sola vez al DOM (`innerHTML` unificado).
+- [x] Carga perezosa (lazy-loading) bajo demanda por sub-pestaña en la ficha de cliente (`shown.bs.tab`).
+- [x] Robustez en `apiFetch` con parseo seguro de respuestas de error.
 
 ## Validación
-- [ ] Abrir panel Clientes y probar búsqueda fluida
-- [ ] Abrir panel Pólizas y probar filtros fluídos
-- [ ] Abrir ficha de cliente y validar que sub-tabs cargan correctamente
-- [ ] Validar que no aparecen errores en consola
+- [x] Abrir panel Clientes y probar búsqueda fluida
+- [x] Abrir panel Pólizas y probar filtros fluidos
+- [x] Abrir ficha de cliente y validar que sub-tabs cargan correctamente con skeletons
+- [x] Validar que no aparecen errores en consola
 

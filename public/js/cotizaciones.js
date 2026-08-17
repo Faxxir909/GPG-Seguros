@@ -4,20 +4,41 @@
 let allQuotes = [];
 
 async function loadQuotesList() {
+  showTableSkeleton('quotes-table-body', 7, 4);
   try {
     const data = await apiFetch('/api/quotes');
     allQuotes = data;
-    renderQuotesTable(data);
-    renderCommercialFunnel(data);
-  } catch (err) { console.error(err); }
+    filterQuotes();
+  } catch (err) {
+    console.error(err);
+    showTableError('quotes-table-body', 7, 'Error al cargar cotizaciones: ' + err.message, 'loadQuotesList()');
+  }
 }
 
-function renderQuotesTable(quotes) {
+function filterQuotes() {
+  const searchEl = document.getElementById('search-quote');
+  const statusEl = document.getElementById('filter-quote-status');
+  const term = searchEl ? searchEl.value.toLowerCase().trim() : '';
+  const statusFilter = statusEl ? statusEl.value : '';
+  const filtered = allQuotes.filter(q => {
+    const matchSearch = !term || (q.cliente_nombre || '').toLowerCase().includes(term) || (q.compania || '').toLowerCase().includes(term) || (q.cobertura || '').toLowerCase().includes(term);
+    const matchStatus = !statusFilter || q.estado === statusFilter;
+    return matchSearch && matchStatus;
+  });
+  renderQuotesTable(filtered, !!(term || statusFilter));
+  renderCommercialFunnel(allQuotes);
+}
+
+function renderQuotesTable(quotes, hasFilter = false) {
   const tbody = document.getElementById('quotes-table-body');
-  tbody.innerHTML = '';
-  if (quotes.length === 0) { tbody.innerHTML = `<tr><td colspan="7" class="text-center py-4">No se encontraron cotizaciones.</td></tr>`; return; }
+  if (!quotes || quotes.length === 0) {
+    const msg = hasFilter ? 'No se encontraron cotizaciones con los filtros aplicados.' : 'No hay cotizaciones registradas.';
+    showTableEmpty('quotes-table-body', 7, msg, 'fa-calculator');
+    return;
+  }
+  let html = '';
   quotes.forEach(q => {
-    tbody.innerHTML += `
+    html += `
       <tr>
         <td><strong>${q.cliente_nombre}</strong></td>
         <td>${q.compania}</td>
@@ -33,6 +54,7 @@ function renderQuotesTable(quotes) {
         </td>
       </tr>`;
   });
+  tbody.innerHTML = html;
 }
 
 function renderCommercialFunnel(quotes) {
@@ -100,6 +122,15 @@ function openConvertQuoteModal(quoteId) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  const searchQuote = document.getElementById('search-quote');
+  if (searchQuote) {
+    searchQuote.addEventListener('input', debounce(filterQuotes, 300));
+  }
+  const filterStatus = document.getElementById('filter-quote-status');
+  if (filterStatus) {
+    filterStatus.addEventListener('change', filterQuotes);
+  }
+
   document.getElementById('formConvertirCotizacion')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const id = document.getElementById('convert-cot-id').value;

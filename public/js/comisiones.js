@@ -4,27 +4,38 @@
 let allCommissions = [];
 
 async function loadCommissionsList() {
+  showTableSkeleton('comisiones-table-body', 9, 5);
   try {
     const data = await apiFetch('/api/commissions');
     allCommissions = data;
     renderCommissions(data);
     const periodSelect = document.getElementById('filter-com-period');
-    periodSelect.innerHTML = '<option value="">Todos los Períodos</option>';
-    [...new Set(data.map(c => c.periodo))].sort().reverse().forEach(p => { periodSelect.innerHTML += `<option value="${p}">${p}</option>`; });
-  } catch (err) { console.error(err); }
+    if (periodSelect) {
+      periodSelect.innerHTML = '<option value="">Todos los Períodos</option>';
+      [...new Set(data.map(c => c.periodo))].sort().reverse().forEach(p => { periodSelect.innerHTML += `<option value="${p}">${p}</option>`; });
+    }
+  } catch (err) {
+    console.error(err);
+    showTableError('comisiones-table-body', 9, 'Error al cargar comisiones: ' + err.message, 'loadCommissionsList()');
+  }
 }
 
-function renderCommissions(commissions) {
+function renderCommissions(commissions, hasFilter = false) {
   const tbody = document.getElementById('comisiones-table-body');
-  tbody.innerHTML = '';
-  if (commissions.length === 0) { tbody.innerHTML = `<tr><td colspan="9" class="text-center py-4">No hay comisiones registradas.</td></tr>`; return; }
+  if (!commissions || commissions.length === 0) {
+    const msg = hasFilter ? 'No se encontraron comisiones para el período/compañía seleccionados.' : 'No hay comisiones registradas en el sistema.';
+    showTableEmpty('comisiones-table-body', 9, msg, 'fa-hand-holding-dollar');
+    return;
+  }
   const user = JSON.parse(localStorage.getItem('gpg_user') || '{}');
+  let html = '';
   commissions.forEach(c => {
     const isPaid = c.estado_pago === 'pagado';
     const statusBadge = isPaid ? `<span class="badge bg-success">Cobrado</span>` : `<span class="badge bg-warning">Pendiente</span>`;
     const actionBtn = !isPaid && user.rol === 'admin' ? `<button class="btn btn-sm btn-success" onclick="markCommissionPaid(${c.id})"><i class="fa-solid fa-cash-register me-1"></i> Cobrar</button>` : '--';
-    tbody.innerHTML += `<tr><td><strong>${c.numero_poliza}</strong></td><td>${c.cliente_nombre}</td><td>${c.compania}</td><td>${c.periodo}</td><td>${formatMoney(c.monto_poliza)}</td><td>${c.tasa_comision*100}%</td><td class="fw-bold text-success">${formatMoney(c.monto_comision)}</td><td>${statusBadge}</td><td class="action-col">${actionBtn}</td></tr>`;
+    html += `<tr><td><strong>${c.numero_poliza}</strong></td><td>${c.cliente_nombre}</td><td>${c.compania}</td><td>${c.periodo}</td><td>${formatMoney(c.monto_poliza)}</td><td>${c.tasa_comision*100}%</td><td class="fw-bold text-success">${formatMoney(c.monto_comision)}</td><td>${statusBadge}</td><td class="action-col">${actionBtn}</td></tr>`;
   });
+  tbody.innerHTML = html;
 }
 
 async function markCommissionPaid(id) {
@@ -36,18 +47,20 @@ async function markCommissionPaid(id) {
 }
 
 function filterCommissions() {
-  const period = document.getElementById('filter-com-period').value;
-  const company = document.getElementById('filter-com-company').value;
-  renderCommissions(allCommissions.filter(c => (period===''||c.periodo===period) && (company===''||c.compania===company)));
+  const period = document.getElementById('filter-com-period')?.value || '';
+  const company = document.getElementById('filter-com-company')?.value || '';
+  const filtered = allCommissions.filter(c => (period===''||c.periodo===period) && (company===''||c.compania===company));
+  renderCommissions(filtered, !!(period || company));
 }
 
 async function loadCommissionRates() {
   const tbody = document.getElementById('tasas-table-body');
   if (!tbody) return;
+  showTableSkeleton('tasas-table-body', 4, 3);
   try {
     const rates = await apiFetch('/api/commission-rates');
-    if (!rates.length) {
-      tbody.innerHTML = '<tr><td colspan="4" class="text-center py-3 text-muted">No hay tasas configuradas.</td></tr>';
+    if (!rates || !rates.length) {
+      showTableEmpty('tasas-table-body', 4, 'No hay tasas configuradas.', 'fa-percent');
       return;
     }
     let html = '';
@@ -63,7 +76,7 @@ async function loadCommissionRates() {
     });
     tbody.innerHTML = html;
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="4" class="text-center text-danger py-3">Error: ${err.message}</td></tr>`;
+    showTableError('tasas-table-body', 4, 'Error al cargar tasas: ' + err.message, 'loadCommissionRates()');
   }
 }
 

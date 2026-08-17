@@ -146,16 +146,32 @@ CREATE TABLE IF NOT EXISTS catalogo_vehiculos (
     UNIQUE (marca, modelo, version)
 );
 
--- 12. TASAS DE COMISION POR COMPAÑIA Y COBERTURA
+-- 10. TASAS DE COMISIÓN POR COMPAÑÍA Y COBERTURA
 CREATE TABLE IF NOT EXISTS tasas_comision (
     id             SERIAL PRIMARY KEY,
     compania       TEXT NOT NULL,
     tipo_cobertura TEXT NOT NULL DEFAULT '*',
-    tasa           NUMERIC(5,4) NOT NULL DEFAULT 0.1500,
+    tasa           NUMERIC(5,4) NOT NULL,
     descripcion    TEXT,
     activa         BOOLEAN NOT NULL DEFAULT TRUE,
     creado_en      TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE (compania, tipo_cobertura)
+);
+
+-- 11. CUOTAS Y PLANES DE COBRANZA
+CREATE TABLE IF NOT EXISTS cuotas_cobranza (
+    id                SERIAL PRIMARY KEY,
+    poliza_id         INTEGER NOT NULL REFERENCES polizas(id) ON DELETE CASCADE,
+    numero_cuota      INTEGER NOT NULL,
+    total_cuotas      INTEGER NOT NULL DEFAULT 12,
+    fecha_vencimiento DATE NOT NULL,
+    monto             NUMERIC(12,2) NOT NULL,
+    estado            TEXT NOT NULL DEFAULT 'pendiente' CHECK (estado IN ('pagada', 'pendiente', 'en_mora', 'anulada')),
+    fecha_pago        DATE,
+    forma_pago        TEXT,
+    notas             TEXT,
+    creado_en         TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (poliza_id, numero_cuota)
 );
 
 -- INDICES

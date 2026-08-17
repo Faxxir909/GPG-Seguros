@@ -1,20 +1,42 @@
-﻿// =========================================================================
+// =========================================================================
 // agenda.js
 // =========================================================================
 async function loadAgendaList() {
+  showTableSkeleton('agenda-table-body', 5, 4);
   try {
     const data = await apiFetch('/api/agenda');
     const tbody = document.getElementById('agenda-table-body');
-    tbody.innerHTML = '';
-    if (data.length === 0) { tbody.innerHTML = `<tr><td colspan="5" class="text-center py-4">No hay tareas pendientes en la agenda.</td></tr>`; return; }
+    if (!data || data.length === 0) {
+      showTableEmpty('agenda-table-body', 5, 'No hay tareas pendientes en la agenda.', 'fa-calendar-check');
+      return;
+    }
+    let html = '';
     data.forEach(task => {
       const completadoClass = task.completado ? 'text-decoration-line-through text-muted' : '';
       const checked = task.completado ? 'checked' : '';
-      const associatedClient = task.cliente_nombre ? `${task.cliente_nombre} (${task.cliente_telefono || '--'})` : 'General / PAS';
-      tbody.innerHTML += `<tr class="${completadoClass}"><td><div class="d-flex align-items-center gap-2"><input class="form-check-input" type="checkbox" ${checked} onchange="toggleTaskComplete(${task.id}, ${task.completado ? 0 : 1})"><div><strong>${task.titulo}</strong><div class="small text-muted">${task.descripcion || ''}</div></div></div></td><td>${associatedClient}</td><td class="fw-bold">${formatDate(task.fecha_vencimiento)}</td><td><span class="badge bg-secondary text-uppercase">${task.tipo}</span></td><td><button class="btn btn-sm btn-link text-danger" onclick="deleteTask(${task.id})"><i class="fa-solid fa-trash"></i></button></td></tr>`;
+      html += `
+        <tr class="${completadoClass}">
+          <td>
+            <div class="d-flex align-items-center gap-2">
+              <input class="form-check-input" type="checkbox" ${checked} onchange="toggleTaskComplete(${task.id}, ${task.completado ? 0 : 1})">
+              <div>
+                <strong>${task.titulo}</strong>
+                <div class="small text-muted">${task.descripcion || ''}</div>
+              </div>
+            </div>
+          </td>
+          <td>${associatedClient}</td>
+          <td>${renderExpirationCell(task.fecha_vencimiento)}</td>
+          <td><span class="badge bg-secondary text-uppercase">${task.tipo}</span></td>
+          <td><button class="btn btn-sm btn-link text-danger" onclick="deleteTask(${task.id})"><i class="fa-solid fa-trash"></i></button></td>
+        </tr>`;
     });
+    tbody.innerHTML = html;
     document.getElementById('quick-notes-area').value = localStorage.getItem('gpg_quick_notes') || '';
-  } catch (err) { console.error(err); }
+  } catch (err) {
+    console.error(err);
+    showTableError('agenda-table-body', 5, 'Error al cargar la agenda: ' + err.message, 'loadAgendaList()');
+  }
 }
 
 async function toggleTaskComplete(id, completedVal) {
