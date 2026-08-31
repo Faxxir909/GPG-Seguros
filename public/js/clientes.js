@@ -147,24 +147,87 @@ function renderClientsPage() {
 
 function renderClients(clients, query = '') {
   const tbody = document.getElementById('clients-table-body');
+  const cardsContainer = document.getElementById('clients-cards-container');
+
   if (!clients || clients.length === 0) {
     const msg = query ? `No se encontraron clientes que coincidan con "${query}".` : 'No hay clientes registrados en el sistema.';
-    showTableEmpty('clients-table-body', 7, msg, 'fa-users-slash');
+    if (tbody) showTableEmpty('clients-table-body', 7, msg, 'fa-users-slash');
+    if (cardsContainer) {
+      cardsContainer.innerHTML = `<div class="text-center py-4 text-muted bg-white rounded-3 border p-3"><i class="fa-solid fa-users-slash fs-2 mb-2 text-secondary opacity-50"></i><p class="mb-0">${msg}</p></div>`;
+    }
     return;
   }
-  let html = '';
-  clients.forEach(c => {
-    const riskBadge = c.riesgo_baja === 1 ? `<span class="badge bg-danger">Riesgo Alto</span>` : `<span class="badge bg-secondary">Normal</span>`;
-    const statusClass = c.estado === 'activo' ? 'text-success' : 'text-danger';
-    html += `
-      <tr>
-        <td><strong>${c.nombre}</strong> <span class="small ${statusClass}">(${c.estado})</span></td>
-        <td>${c.dni_cuit}</td><td>${c.telefono || '--'}</td><td>${c.email || '--'}</td><td>${c.localidad || '--'}</td>
-        <td>${riskBadge}</td>
-        <td><button class="btn btn-sm btn-premium" onclick="openClientDetail(${c.id})"><i class="fa-solid fa-folder-open me-1"></i> Ficha</button></td>
-      </tr>`;
-  });
-  tbody.innerHTML = html;
+
+  // 1. Desktop Table
+  if (tbody) {
+    let html = '';
+    clients.forEach(c => {
+      const riskBadge = c.riesgo_baja === 1 ? `<span class="badge bg-danger">Riesgo Alto</span>` : `<span class="badge bg-secondary">Normal</span>`;
+      const statusClass = c.estado === 'activo' ? 'text-success' : 'text-danger';
+      html += `
+        <tr>
+          <td><strong>${c.nombre}</strong> <span class="small ${statusClass}">(${c.estado})</span></td>
+          <td>${c.dni_cuit}</td><td>${c.telefono || '--'}</td><td>${c.email || '--'}</td><td>${c.localidad || '--'}</td>
+          <td>${riskBadge}</td>
+          <td><button class="btn btn-sm btn-premium" onclick="openClientDetail(${c.id})"><i class="fa-solid fa-folder-open me-1"></i> Ficha</button></td>
+        </tr>`;
+    });
+    tbody.innerHTML = html;
+  }
+
+  // 2. Mobile Cards (< 768px / 390px)
+  if (cardsContainer) {
+    let cardsHtml = '';
+    clients.forEach(c => {
+      const riskBadge = c.riesgo_baja === 1 ? `<span class="badge bg-danger">Riesgo Alto</span>` : '';
+      const cleanTel = normalizeArgentinePhone(c.telefono);
+      const waUrl = cleanTel ? `https://wa.me/${cleanTel}?text=${encodeURIComponent(`Hola ${c.nombre}, te contactamos desde GPG Seguros.`)}` : '';
+
+      cardsHtml += `
+        <div class="mobile-client-card">
+          <div class="mobile-card-header">
+            <div>
+              <div class="fw-bold text-dark fs-6"><i class="fa-solid fa-user text-primary me-1"></i>${c.nombre}</div>
+              <span class="text-muted small font-monospace">DNI/CUIT: ${c.dni_cuit}</span>
+            </div>
+            <div>
+              ${riskBadge}
+              <span class="badge ${c.estado === 'activo' ? 'bg-success-subtle text-success' : 'bg-danger-subtle text-danger'}">${c.estado}</span>
+            </div>
+          </div>
+
+          <div class="mobile-card-body">
+            ${c.telefono ? `
+            <div class="d-flex justify-content-between align-items-center">
+              <span class="text-muted small">Teléfono:</span>
+              <span class="text-dark">${c.telefono}</span>
+            </div>` : ''}
+            ${c.email ? `
+            <div class="d-flex justify-content-between align-items-center">
+              <span class="text-muted small">Email:</span>
+              <span class="text-dark small">${c.email}</span>
+            </div>` : ''}
+            ${c.localidad ? `
+            <div class="d-flex justify-content-between align-items-center">
+              <span class="text-muted small">Ubicación:</span>
+              <span class="text-dark">${c.localidad}${c.provincia ? ', ' + c.provincia : ''}</span>
+            </div>` : ''}
+          </div>
+
+          <div class="mobile-card-actions">
+            ${cleanTel ? `
+            <a href="${waUrl}" target="_blank" class="btn btn-success flex-grow-1 text-center" title="WhatsApp">
+              <i class="fa-brands fa-whatsapp me-1"></i> WhatsApp
+            </a>` : ''}
+            <button class="btn btn-premium flex-grow-1" onclick="openClientDetail(${c.id})">
+              <i class="fa-solid fa-folder-open me-1"></i> Ver Ficha
+            </button>
+          </div>
+        </div>
+      `;
+    });
+    cardsContainer.innerHTML = cardsHtml;
+  }
 }
 
 // ─── FICHA CLIENTE ─────────────────────────────────────────────────────────

@@ -77,66 +77,156 @@ function renderPoliciesPage() {
 
 function renderPolicies(policies, hasFilters = false) {
   const tbody = document.getElementById('policies-table-body');
+  const cardsContainer = document.getElementById('policies-cards-container');
+
   if (!policies || policies.length === 0) {
     const msg = hasFilters ? 'No se encontraron pólizas con los filtros de vencimiento/búsqueda aplicados.' : 'No hay pólizas registradas en el sistema.';
-    showTableEmpty('policies-table-body', 9, msg, 'fa-file-circle-xmark');
+    if (tbody) showTableEmpty('policies-table-body', 9, msg, 'fa-file-circle-xmark');
+    if (cardsContainer) {
+      cardsContainer.innerHTML = `<div class="text-center py-4 text-muted bg-white rounded-3 border p-3"><i class="fa-solid fa-file-circle-xmark fs-2 mb-2 text-secondary opacity-50"></i><p class="mb-0">${msg}</p></div>`;
+    }
     return;
   }
-  let html = '';
-  policies.forEach(p => {
-    const motorTag = p.motor ? `<div class="small text-muted"><i class="fa-solid fa-gears me-1"></i>Mot: ${p.motor}</div>` : '';
-    const vDesc = p.marca ? `${p.marca} ${p.modelo} <span class="small font-monospace bg-light p-1">(${p.patente})</span>${motorTag}` : '<span class="text-muted small">Sin vehículo</span>';
-    const renLabel = p.numero_renovacion > 0 ? ` <span class="badge bg-info text-dark" style="font-size:10px;">Ren. ${p.numero_renovacion}</span>` : '';
-    
-    const cuotaDisplay = (p.valor_cuota && parseFloat(p.valor_cuota) > 0)
-      ? `<div class="fw-bold text-success">${formatMoney(p.valor_cuota)}/mes</div>`
-      : (p.monto_total && parseFloat(p.monto_total) > 0)
-        ? `<div class="fw-bold text-success">${formatMoney(p.monto_total)}</div>`
-        : `<span class="badge bg-warning text-dark cursor-pointer" onclick="openEditPolicyModal(${p.id})" title="Hacer clic para ingresar valor de la cuota"><i class="fa-solid fa-pen me-1"></i> A ingresar</span>`;
 
-    const cleanTel = p.cliente_telefono ? String(p.cliente_telefono).replace(/[^0-9]/g, '') : '';
-    const waBtn = cleanTel ? `
-      <a href="https://wa.me/${cleanTel}?text=${encodeURIComponent(`Hola ${p.cliente_nombre}, te escribimos de GPG Seguros para informarte sobre tu póliza Nº ${p.numero_poliza} (${p.cobertura}) en ${p.compania}, con vencimiento el ${formatDate(p.fecha_vencimiento)}.`)}" target="_blank" class="btn btn-sm btn-outline-success py-1 me-1" title="Enviar WhatsApp al cliente">
-        <i class="fa-brands fa-whatsapp"></i>
-      </a>
-    ` : '';
+  // 1. Render Desktop Table
+  if (tbody) {
+    let html = '';
+    policies.forEach(p => {
+      const motorTag = p.motor ? `<div class="small text-muted"><i class="fa-solid fa-gears me-1"></i>Mot: ${p.motor}</div>` : '';
+      const vDesc = p.marca ? `${p.marca} ${p.modelo} <span class="small font-monospace bg-light p-1">(${p.patente})</span>${motorTag}` : '<span class="text-muted small">Sin vehículo</span>';
+      const renLabel = p.numero_renovacion > 0 ? ` <span class="badge bg-info text-dark" style="font-size:10px;">Ren. ${p.numero_renovacion}</span>` : '';
+      
+      const cuotaDisplay = (p.valor_cuota && parseFloat(p.valor_cuota) > 0)
+        ? `<div class="fw-bold text-success">${formatMoney(p.valor_cuota)}/mes</div>`
+        : (p.monto_total && parseFloat(p.monto_total) > 0)
+          ? `<div class="fw-bold text-success">${formatMoney(p.monto_total)}</div>`
+          : `<span class="badge bg-warning text-dark cursor-pointer" onclick="openEditPolicyModal(${p.id})" title="Hacer clic para ingresar valor de la cuota"><i class="fa-solid fa-pen me-1"></i> A ingresar</span>`;
 
-    const days = getDaysUntilExpiration(p.fecha_vencimiento);
-    let rowBorderClass = '';
-    if (days < 0 || p.estado === 'vencida') rowBorderClass = 'border-start border-4 border-danger';
-    else if (days <= 7) rowBorderClass = 'border-start border-4 border-danger';
-    else if (days <= 15) rowBorderClass = 'border-start border-4 border-warning';
-    else if (days <= 30) rowBorderClass = 'border-start border-4 border-info';
+      const cleanTel = normalizeArgentinePhone(p.cliente_telefono);
+      const waBtn = cleanTel ? `
+        <a href="https://wa.me/${cleanTel}?text=${encodeURIComponent(`Hola ${p.cliente_nombre}, te escribimos de GPG Seguros para informarte sobre tu póliza Nº ${p.numero_poliza} (${p.cobertura}) en ${p.compania}, con vencimiento el ${formatDate(p.fecha_vencimiento)}.`)}" target="_blank" class="btn btn-sm btn-outline-success py-1 me-1" title="Enviar WhatsApp al cliente">
+          <i class="fa-brands fa-whatsapp"></i>
+        </a>
+      ` : '';
 
-    html += `
-      <tr class="${rowBorderClass}">
-        <td><strong>${p.numero_poliza || 'PENDIENTE'}</strong>${renLabel}</td>
-        <td><div class="fw-bold text-dark">${p.cliente_nombre}</div></td>
-        <td>${vDesc}</td>
-        <td><span class="badge bg-light text-dark border">${p.compania}</span></td>
-        <td><div class="small fw-semibold text-secondary">${p.cobertura}</div></td>
-        <td>${renderExpirationCell(p.fecha_vencimiento, false, p.fecha_inicio)}</td>
-        <td>
-          <div class="cursor-pointer" onclick="openPolicyInstallmentsModal(${p.id})" title="Ver plan de cuotas y cobranzas">
-            ${cuotaDisplay}
-            <div class="small text-muted d-flex align-items-center gap-1">
-              <span>${p.forma_pago || ''}</span>
-              <i class="fa-solid fa-credit-card text-primary" style="font-size: 10px;"></i>
+      const days = getDaysUntilExpiration(p.fecha_vencimiento);
+      let rowBorderClass = '';
+      if (days < 0 || p.estado === 'vencida') rowBorderClass = 'border-start border-4 border-danger';
+      else if (days <= 7) rowBorderClass = 'border-start border-4 border-danger';
+      else if (days <= 15) rowBorderClass = 'border-start border-4 border-warning';
+      else if (days <= 30) rowBorderClass = 'border-start border-4 border-info';
+
+      html += `
+        <tr class="${rowBorderClass}">
+          <td><strong>${p.numero_poliza || 'PENDIENTE'}</strong>${renLabel}</td>
+          <td><div class="fw-bold text-dark">${p.cliente_nombre}</div></td>
+          <td>${vDesc}</td>
+          <td><span class="badge bg-light text-dark border">${p.compania}</span></td>
+          <td><div class="small fw-semibold text-secondary">${p.cobertura}</div></td>
+          <td>${renderExpirationCell(p.fecha_vencimiento, false, p.fecha_inicio)}</td>
+          <td>
+            <div class="cursor-pointer" onclick="openPolicyInstallmentsModal(${p.id})" title="Ver plan de cuotas y cobranzas">
+              ${cuotaDisplay}
+              <div class="small text-muted d-flex align-items-center gap-1">
+                <span>${p.forma_pago || ''}</span>
+                <i class="fa-solid fa-credit-card text-primary" style="font-size: 10px;"></i>
+              </div>
+            </div>
+          </td>
+          <td><span class="badge-status badge-${p.estado}">${p.estado}</span></td>
+          <td>
+            <div class="d-flex align-items-center">
+              ${waBtn}
+              <button class="btn btn-sm btn-outline-info py-1 me-1" title="Ver Plan de Cuotas y Cobranzas" onclick="openPolicyInstallmentsModal(${p.id})"><i class="fa-solid fa-credit-card"></i></button>
+              <button class="btn btn-sm btn-outline-primary py-1 me-1" title="Editar Póliza" onclick="openEditPolicyModal(${p.id})"><i class="fa-solid fa-pen-to-square"></i></button>
+              ${p.estado === 'vencida' ? `<button class="btn btn-sm btn-success py-1" title="Renovar Póliza" onclick="quickRenewPolicy(${p.id})"><i class="fa-solid fa-rotate"></i></button>` : ''}
+            </div>
+          </td>
+        </tr>`;
+    });
+    tbody.innerHTML = html;
+  }
+
+  // 2. Render Mobile Cards (< 768px / 390px)
+  if (cardsContainer) {
+    let cardsHtml = '';
+    policies.forEach(p => {
+      const days = getDaysUntilExpiration(p.fecha_vencimiento);
+      let cardUrgencyClass = 'card-vigente';
+      if (days < 0 || p.estado === 'vencida') cardUrgencyClass = 'card-vencida';
+      else if (days <= 15) cardUrgencyClass = 'card-urgente';
+
+      const renBadge = p.numero_renovacion > 0 ? `<span class="badge bg-info text-dark" style="font-size:10px;">Ren. ${p.numero_renovacion}</span>` : '';
+      const cleanTel = normalizeArgentinePhone(p.cliente_telefono);
+      const waUrl = cleanTel ? `https://wa.me/${cleanTel}?text=${encodeURIComponent(`Hola ${p.cliente_nombre}, te escribimos de GPG Seguros para informarte sobre tu póliza Nº ${p.numero_poliza} (${p.cobertura}) en ${p.compania}, con vencimiento el ${formatDate(p.fecha_vencimiento)}.`)}` : '';
+
+      const cuotaVal = (p.valor_cuota && parseFloat(p.valor_cuota) > 0)
+        ? `${formatMoney(p.valor_cuota)}/mes`
+        : (p.monto_total && parseFloat(p.monto_total) > 0)
+          ? formatMoney(p.monto_total)
+          : 'A ingresar';
+
+      cardsHtml += `
+        <div class="mobile-policy-card ${cardUrgencyClass}">
+          <div class="mobile-card-header">
+            <div>
+              <div class="fw-bold font-monospace text-dark fs-6">
+                <i class="fa-solid fa-file-shield text-primary me-1"></i>${p.numero_poliza || 'PENDIENTE'}${renBadge ? ' ' + renBadge : ''}
+              </div>
+              <span class="badge bg-light text-dark border mt-1">${p.compania}</span>
+            </div>
+            <span class="badge-status badge-${p.estado}">${p.estado}</span>
+          </div>
+
+          <div class="mobile-card-body">
+            <div class="d-flex justify-content-between align-items-center">
+              <span class="text-muted small">Cliente:</span>
+              <span class="fw-bold text-dark">${p.cliente_nombre}</span>
+            </div>
+            ${p.marca ? `
+            <div class="d-flex justify-content-between align-items-center">
+              <span class="text-muted small">Vehículo:</span>
+              <span class="text-dark">${p.marca} ${p.modelo} <span class="font-monospace small bg-light px-1 border rounded">${p.patente || ''}</span></span>
+            </div>` : ''}
+            <div class="d-flex justify-content-between align-items-center">
+              <span class="text-muted small">Cobertura:</span>
+              <span class="fw-semibold text-secondary">${p.cobertura}</span>
+            </div>
+            <div class="d-flex justify-content-between align-items-center">
+              <span class="text-muted small">Cuota:</span>
+              <span class="fw-bold text-success">${cuotaVal}</span>
+            </div>
+            <div class="d-flex justify-content-between align-items-center pt-1 border-top">
+              <span class="text-muted small">Vencimiento:</span>
+              <div>${renderExpirationCell(p.fecha_vencimiento, true, p.fecha_inicio)}</div>
             </div>
           </div>
-        </td>
-        <td><span class="badge-status badge-${p.estado}">${p.estado}</span></td>
-        <td>
-          <div class="d-flex align-items-center">
-            ${waBtn}
-            <button class="btn btn-sm btn-outline-info py-1 me-1" title="Ver Plan de Cuotas y Cobranzas" onclick="openPolicyInstallmentsModal(${p.id})"><i class="fa-solid fa-credit-card"></i></button>
-            <button class="btn btn-sm btn-outline-primary py-1 me-1" title="Editar Póliza" onclick="openEditPolicyModal(${p.id})"><i class="fa-solid fa-pen-to-square"></i></button>
-            ${p.estado === 'vencida' ? `<button class="btn btn-sm btn-success py-1" title="Renovar Póliza" onclick="quickRenewPolicy(${p.id})"><i class="fa-solid fa-rotate"></i></button>` : ''}
+
+          <div class="mobile-card-actions">
+            ${cleanTel ? `
+            <a href="${waUrl}" target="_blank" class="btn btn-success flex-grow-1 text-center" title="WhatsApp">
+              <i class="fa-brands fa-whatsapp me-1"></i> WhatsApp
+            </a>` : ''}
+            <button class="btn btn-outline-info flex-grow-1" onclick="openPolicyInstallmentsModal(${p.id})">
+              <i class="fa-solid fa-credit-card me-1"></i> Cuotas
+            </button>
+            <div class="dropdown">
+              <button class="btn btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                Acciones
+              </button>
+              <ul class="dropdown-menu dropdown-menu-end shadow">
+                <li><a class="dropdown-item" href="#" onclick="openEditPolicyModal(${p.id}); return false;"><i class="fa-solid fa-pen me-2 text-primary"></i>Editar Póliza</a></li>
+                ${p.estado === 'vencida' ? `<li><a class="dropdown-item" href="#" onclick="quickRenewPolicy(${p.id}); return false;"><i class="fa-solid fa-rotate me-2 text-success"></i>Renovar</a></li>` : ''}
+                <li><hr class="dropdown-divider"></li>
+                <li><a class="dropdown-item text-danger" href="#" onclick="deletePolicy(${p.id}); return false;"><i class="fa-solid fa-trash me-2"></i>Eliminar</a></li>
+              </ul>
+            </div>
           </div>
-        </td>
-      </tr>`;
-  });
-  tbody.innerHTML = html;
+        </div>
+      `;
+    });
+    cardsContainer.innerHTML = cardsHtml;
+  }
 }
 
 function filterPolicies() { policiesPage = 1; renderPoliciesPage(); }

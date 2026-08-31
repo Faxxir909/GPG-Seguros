@@ -32,19 +32,45 @@ function validateEmail(email) {
   return emailRegex.test(email);
 }
 
-// Listar clientes con paginación opcional
+// Listar clientes con paginación y búsqueda opcional en servidor
 async function getClients(req, res, next) {
-  const { limit, page } = req.query;
+  const { limit, page, search, estado } = req.query;
   try {
-    let sql = 'SELECT * FROM clientes ORDER BY nombre ASC';
+    let sql = 'SELECT * FROM clientes WHERE 1=1';
     const params = [];
+
+    if (search) {
+      sql += ' AND (nombre LIKE ? OR dni_cuit LIKE ? OR email LIKE ? OR telefono LIKE ? OR localidad LIKE ?)';
+      const s = `%${search}%`;
+      params.push(s, s, s, s, s);
+    }
+    if (estado) {
+      sql += ' AND estado = ?';
+      params.push(estado);
+    }
+
+    sql += ' ORDER BY nombre ASC';
     
     if (limit) {
       const parsedLimit = parseInt(limit);
       const parsedPage = page ? parseInt(page) : 1;
       const offset = (parsedPage - 1) * parsedLimit;
+
+      const countSql = `SELECT COUNT(*) as count FROM (` + sql + `) as count_q`;
+      const countRes = await db.get(countSql, params);
+      const total = parseInt(countRes?.count || 0);
+
       sql += ' LIMIT ? OFFSET ?';
       params.push(parsedLimit, offset);
+
+      const clients = await db.all(sql, params);
+      return res.json({
+        data: clients,
+        total,
+        page: parsedPage,
+        limit: parsedLimit,
+        totalPages: Math.ceil(total / parsedLimit) || 1
+      });
     }
     
     const clients = await db.all(sql, params);

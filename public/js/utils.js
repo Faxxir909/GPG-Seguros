@@ -149,6 +149,66 @@ const formatDate = (dateStr) => {
   return `${parts[2]}/${parts[1]}/${parts[0]}`;
 };
 
+/**
+ * Normaliza un número de teléfono argentino a formato internacional E.164 para WhatsApp
+ * Ejemplos:
+ *   "011 15-4444-5555" -> "5491144445555"
+ *   "11 4444-5555"     -> "5491144445555"
+ *   "+54 9 11 44445555"-> "5491144445555"
+ *   "0341-15-4123456"  -> "5493414123456"
+ *   "341 4123456"      -> "5493414123456"
+ */
+function normalizeArgentinePhone(phone) {
+  if (!phone) return '';
+  let clean = String(phone).replace(/[^0-9]/g, '');
+  if (!clean) return '';
+
+  // Si ya empieza con 549 (formato internacional completo para WhatsApp)
+  if (clean.startsWith('549') && clean.length >= 12) {
+    // Quitar 15 si se incluyó después del código de área
+    return clean.replace(/^549(11|2\d{2}|3\d{2}|4\d{2}|2\d{3}|3\d{3})15(\d{6,8})$/, '549$1$2');
+  }
+
+  // Si empieza con 54 pero le falta el 9 móvil (ej. 541144445555)
+  if (clean.startsWith('54') && !clean.startsWith('549') && clean.length >= 11) {
+    clean = '549' + clean.slice(2);
+    return clean.replace(/^549(11|2\d{2}|3\d{2}|4\d{2}|2\d{3}|3\d{3})15(\d{6,8})$/, '549$1$2');
+  }
+
+  // Quitar el 0 de prefijo interurbano nacional (ej: 011 -> 11, 0341 -> 341)
+  if (clean.startsWith('0')) {
+    clean = clean.slice(1);
+  }
+
+  // Si empieza directo con 15 (móvil CABA/AMBA sin prefijo 11)
+  if (clean.startsWith('15') && clean.length === 10) {
+    clean = '11' + clean.slice(2);
+  }
+
+  // Manejar el '15' móvil intermedio
+  if (clean.startsWith('1115')) {
+    clean = '11' + clean.slice(4);
+  } else {
+    // Códigos de área de 3 o 4 dígitos (341, 351, 261, 221, etc.)
+    const match3 = clean.match(/^(\d{3})15(\d{6,7})$/);
+    if (match3) {
+      clean = match3[1] + match3[2];
+    } else {
+      const match4 = clean.match(/^(\d{4})15(\d{5,6})$/);
+      if (match4) {
+        clean = match4[1] + match4[2];
+      }
+    }
+  }
+
+  // Asegurar prefijo internacional '549'
+  if (!clean.startsWith('549')) {
+    clean = '549' + clean;
+  }
+
+  return clean;
+}
+
 /** Formateador enriquecido para fechas de vencimiento con insignia de urgencia y barra de vigencia */
 function renderExpirationCell(dateStr, compact = false, startDateStr = null) {
   if (!dateStr) return '<span class="text-muted small">--</span>';
@@ -309,4 +369,12 @@ function showTableError(tbodyId, colsCount = 6, errorMessage = 'Error al cargar 
         </div>
       </td>
     </tr>`;
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    normalizeArgentinePhone,
+    formatDate,
+    formatMoney
+  };
 }

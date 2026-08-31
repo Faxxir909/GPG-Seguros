@@ -163,9 +163,62 @@
            1. DASHBOARD PANEL
            ========================================== -->
       <section id="panel-dashboard" class="panel-section">
+        <!-- COLA DE TRABAJO OPERATIVA (Acciones Prioritarias) -->
+        <div class="action-queue-card mb-4">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <div class="d-flex align-items-center gap-2">
+              <i class="fa-solid fa-bolt-lightning text-warning fs-5"></i>
+              <h5 class="fw-bold mb-0 text-white">Cola de Trabajo Operativa</h5>
+            </div>
+            <span class="badge bg-white bg-opacity-10 text-white px-2 py-1 small"><i class="fa-solid fa-fire text-danger me-1"></i>Acción Rápida</span>
+          </div>
+          <div class="row g-2 g-md-3">
+            <div class="col-6 col-md-3">
+              <div class="action-queue-item" id="queue-item-vencidas" title="Ver pólizas vencidas">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                  <span class="badge bg-danger text-white"><i class="fa-solid fa-triangle-exclamation me-1"></i>Vencidas</span>
+                  <i class="fa-solid fa-chevron-right text-white-50 small"></i>
+                </div>
+                <div class="action-queue-count" id="cola-count-vencidas">0</div>
+                <div class="text-white-50 small">Pólizas sin renovar</div>
+              </div>
+            </div>
+            <div class="col-6 col-md-3">
+              <div class="action-queue-item" id="queue-item-renovar" title="Ver pólizas que vencen en ≤ 7 días">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                  <span class="badge bg-warning text-dark"><i class="fa-solid fa-hourglass-start me-1"></i>Vencen ≤ 7d</span>
+                  <i class="fa-solid fa-chevron-right text-white-50 small"></i>
+                </div>
+                <div class="action-queue-count text-warning" id="cola-count-renovar">0</div>
+                <div class="text-white-50 small">Avisar WhatsApp</div>
+              </div>
+            </div>
+            <div class="col-6 col-md-3">
+              <div class="action-queue-item" id="queue-item-mora" title="Ver cuotas en mora">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                  <span class="badge bg-danger-subtle text-danger"><i class="fa-solid fa-credit-card me-1"></i>En Mora</span>
+                  <i class="fa-solid fa-chevron-right text-white-50 small"></i>
+                </div>
+                <div class="action-queue-count text-danger" id="cola-count-mora">0</div>
+                <div class="text-white-50 small">Cuotas atrasadas</div>
+              </div>
+            </div>
+            <div class="col-6 col-md-3">
+              <div class="action-queue-item" id="queue-item-docs" title="Ver clientes sin documentación">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                  <span class="badge bg-info-subtle text-info"><i class="fa-solid fa-folder-open me-1"></i>Doc. Pendiente</span>
+                  <i class="fa-solid fa-chevron-right text-white-50 small"></i>
+                </div>
+                <div class="action-queue-count text-info" id="cola-count-docs">0</div>
+                <div class="text-white-50 small">Sin DNI / Adjuntos</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Stats Summary Cards -->
-        <div class="row g-4 mb-4">
-          <div class="col-md-3">
+        <div class="row g-3 g-md-4 mb-4">
+          <div class="col-6 col-md-3">
             <div class="stats-card">
               <div>
                 <span class="stats-label">Clientes Activos</span>
@@ -174,7 +227,7 @@
               <div class="stats-icon bg-info-subtle text-info"><i class="fa-solid fa-users"></i></div>
             </div>
           </div>
-          <div class="col-md-3">
+          <div class="col-6 col-md-3">
             <div class="stats-card">
               <div>
                 <span class="stats-label">Pólizas Vigentes</span>
@@ -183,7 +236,7 @@
               <div class="stats-icon bg-success-subtle text-success"><i class="fa-solid fa-file-shield"></i></div>
             </div>
           </div>
-          <div class="col-md-3">
+          <div class="col-6 col-md-3">
             <div class="stats-card">
               <div>
                 <span class="stats-label">Vencimientos (30d)</span>
@@ -192,7 +245,7 @@
               <div class="stats-icon bg-danger-subtle text-danger"><i class="fa-solid fa-hourglass-half"></i></div>
             </div>
           </div>
-          <div class="col-md-3">
+          <div class="col-6 col-md-3">
             <div class="stats-card">
               <div>
                 <span class="stats-label">Siniestros Abiertos</span>
@@ -203,8 +256,8 @@
           </div>
         </div>
 
-        <div class="row g-4 mb-4">
-          <div class="col-md-6">
+        <div class="row g-3 g-md-4 mb-4">
+          <div class="col-12 col-md-6">
             <div class="stats-card">
               <div>
                 <span class="stats-label">Producción del Mes</span>
@@ -213,7 +266,7 @@
               <div class="stats-icon bg-primary-subtle text-primary"><i class="fa-solid fa-hand-holding-hand"></i></div>
             </div>
           </div>
-          <div class="col-md-6">
+          <div class="col-12 col-md-6">
             <div class="stats-card">
               <div>
                 <span class="stats-label">Comisiones del Mes</span>
@@ -226,20 +279,23 @@
 
         <div class="row g-4">
           <!-- Charts -->
-          <div class="col-lg-7">
+          <div class="col-lg-6">
             <div class="app-card">
-              <div class="app-card-title">Resumen de Comisiones</div>
-              <div style="position: relative; height: 260px;">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <div class="app-card-title mb-0">Evolución Real de Comisiones</div>
+                <span class="badge bg-light text-muted border small">Últimos 6 meses</span>
+              </div>
+              <div style="position: relative; height: 210px;">
                 <canvas id="chartComisiones"></canvas>
               </div>
             </div>
           </div>
           <!-- Vencimientos -->
-          <div class="col-lg-5">
-            <div class="app-card d-flex flex-column" style="height: 100%; min-height: 380px;">
+          <div class="col-lg-6">
+            <div class="app-card d-flex flex-column" style="height: 100%; min-height: 290px;">
               <div class="d-flex justify-content-between align-items-center mb-2">
                 <div class="app-card-title mb-0">Próximos Vencimientos</div>
-                <span class="badge bg-primary-subtle text-primary border border-primary-subtle font-monospace small">Próximos 30 días</span>
+                <span class="badge bg-primary-subtle text-primary border border-primary-subtle font-monospace small">≤ 30 días</span>
               </div>
               <div class="table-responsive table-scrollable flex-grow-1 shadow-2xs">
                 <table class="table table-hover align-middle mb-0" style="font-size: 0.85rem;">
@@ -267,26 +323,30 @@
       <section id="panel-clientes" class="panel-section d-none">
         <!-- List View -->
         <div id="clients-list-view">
-          <div class="d-flex justify-content-between align-items-center mb-3">
-            <div class="input-group w-50">
+          <div class="d-flex flex-column flex-md-row justify-content-between align-items-stretch align-items-md-center gap-2 mb-3">
+            <div class="input-group">
               <span class="input-group-text bg-white border-end-0"><i class="fa-solid fa-magnifying-glass text-muted"></i></span>
               <input type="text" class="form-control border-start-0" id="search-client" placeholder="Buscar cliente por nombre, DNI o CUIT...">
             </div>
-            <div class="d-flex gap-2">
-              <button class="btn btn-primary shadow-sm" data-bs-toggle="modal" data-bs-target="#modalCargaInteligente">
-                <i class="fa-solid fa-wand-magic-sparkles me-2"></i> Carga Inteligente PDF
+            <div class="d-flex gap-2 flex-wrap">
+              <button class="btn btn-primary shadow-sm flex-grow-1 flex-md-grow-0" data-bs-toggle="modal" data-bs-target="#modalCargaInteligente">
+                <i class="fa-solid fa-wand-magic-sparkles me-1"></i> Carga PDF
               </button>
-              <button class="btn btn-premium-outline" id="btn-import-clients-modal" data-bs-toggle="modal" data-bs-target="#modalImportarClientes">
-                <i class="fa-solid fa-file-excel me-2"></i> Importar Excel
+              <button class="btn btn-premium-outline shadow-sm flex-grow-1 flex-md-grow-0" id="btn-import-clients-modal" data-bs-toggle="modal" data-bs-target="#modalImportarClientes">
+                <i class="fa-solid fa-file-excel me-1"></i> Excel
               </button>
-              <button class="btn btn-premium" id="btn-new-client" data-bs-toggle="modal" data-bs-target="#modalCliente">
-                <i class="fa-solid fa-user-plus me-2"></i> Nuevo Cliente
+              <button class="btn btn-premium shadow-sm flex-grow-1 flex-md-grow-0" id="btn-new-client" data-bs-toggle="modal" data-bs-target="#modalCliente">
+                <i class="fa-solid fa-user-plus me-1"></i> Nuevo
               </button>
             </div>
           </div>
 
-          <div class="table-responsive">
-            <table class="table table-hover align-middle">
+          <!-- Vista Móvil (Tarjetas para teléfonos) -->
+          <div id="clients-cards-container" class="d-block d-md-none mb-3"></div>
+
+          <!-- Vista Desktop (Tabla) -->
+          <div class="table-responsive d-none d-md-block shadow-sm" style="border-radius: 12px; background: #fff;">
+            <table class="table table-hover align-middle mb-0">
               <thead>
                 <tr>
                   <th>Nombre</th>
@@ -506,58 +566,74 @@
            3. PÓLIZAS PANEL
            ========================================== -->
       <section id="panel-polizas" class="panel-section d-none">
-          <div class="d-flex justify-content-between align-items-center mb-3">
-            <div class="d-flex gap-2 w-70">
-              <input type="text" class="form-control" id="search-policy" placeholder="Buscar póliza por número o cliente...">
-              <select class="form-select" id="filter-policy-status" style="width: 180px;">
-                <option value="">Todos los Estados</option>
-                <option value="vigente">Vigentes</option>
-                <option value="vencida">Vencidas</option>
-                <option value="suspendida">Suspendidas</option>
-              </select>
-              <select class="form-select" id="filter-policy-company" style="width: 180px;">
-                <option value="">Todas las Compañías</option>
-                <option value="Sancor Seguros">Sancor Seguros</option>
-                <option value="El Norte Seguros">El Norte Seguros</option>
-                <option value="Federación Patronal">Federación Patronal</option>
-                <option value="La Segunda">La Segunda</option>
-              </select>
+        <!-- Barra de Filtros y Acciones -->
+        <div class="card border-0 shadow-sm mb-3" style="border-radius: 14px;">
+          <div class="card-body p-3">
+            <div class="row g-2 align-items-center">
+              <div class="col-12 col-md-4">
+                <div class="input-group">
+                  <span class="input-group-text bg-white border-end-0"><i class="fa-solid fa-magnifying-glass text-muted"></i></span>
+                  <input type="text" class="form-control border-start-0" id="search-policy" placeholder="Buscar por Nº póliza, cliente o patente...">
+                </div>
+              </div>
+              <div class="col-6 col-md-3">
+                <select class="form-select" id="filter-policy-status">
+                  <option value="">Todos los Estados</option>
+                  <option value="vigente">Vigentes</option>
+                  <option value="vencida">Vencidas</option>
+                  <option value="suspendida">Suspendidas</option>
+                </select>
+              </div>
+              <div class="col-6 col-md-3">
+                <select class="form-select" id="filter-policy-company">
+                  <option value="">Todas las Compañías</option>
+                  <option value="Sancor Seguros">Sancor Seguros</option>
+                  <option value="El Norte Seguros">El Norte Seguros</option>
+                  <option value="Federación Patronal">Federación Patronal</option>
+                  <option value="La Segunda">La Segunda</option>
+                </select>
+              </div>
+              <div class="col-12 col-md-2 d-flex gap-1 justify-content-md-end">
+                <button class="btn btn-outline-success shadow-xs flex-grow-1 flex-md-grow-0" id="btn-import-policies-modal" data-bs-toggle="modal" data-bs-target="#modalImportarPolizas" title="Importar Excel">
+                  <i class="fa-solid fa-file-excel"></i>
+                </button>
+                <button class="btn btn-primary shadow-xs flex-grow-1 flex-md-grow-0" data-bs-toggle="modal" data-bs-target="#modalCargaInteligente" title="Carga Inteligente PDF">
+                  <i class="fa-solid fa-wand-magic-sparkles me-1"></i> <span class="d-none d-lg-inline">Carga PDF</span>
+                </button>
+              </div>
             </div>
-            <div class="d-flex gap-2">
-              <button class="btn btn-outline-success shadow-sm" id="btn-import-policies-modal" data-bs-toggle="modal" data-bs-target="#modalImportarPolizas">
-                <i class="fa-solid fa-file-excel me-2"></i> Importar Excel
+
+            <!-- Filtros Rápidos de Vencimiento -->
+            <div class="d-flex flex-wrap align-items-center gap-1 gap-md-2 mt-3 pt-2 border-top">
+              <span class="small text-muted fw-bold me-1"><i class="fa-solid fa-stopwatch text-primary me-1"></i>Vencimiento:</span>
+              <button type="button" class="btn btn-sm btn-light border exp-filter-pill active fw-semibold shadow-xs" data-exp="all">
+                Todas
               </button>
-              <button class="btn btn-primary shadow-sm" data-bs-toggle="modal" data-bs-target="#modalCargaInteligente">
-                <i class="fa-solid fa-wand-magic-sparkles me-2"></i> Carga Inteligente PDF
+              <button type="button" class="btn btn-sm btn-outline-danger exp-filter-pill fw-semibold" data-exp="vencidas">
+                <i class="fa-solid fa-triangle-exclamation me-1"></i>Vencidas
+              </button>
+              <button type="button" class="btn btn-sm btn-outline-danger exp-filter-pill fw-semibold" data-exp="7d">
+                <i class="fa-solid fa-fire me-1"></i>En ≤ 7 días
+              </button>
+              <button type="button" class="btn btn-sm btn-outline-warning exp-filter-pill fw-semibold text-dark" data-exp="30d">
+                <i class="fa-solid fa-hourglass-half me-1"></i>En ≤ 30 días
+              </button>
+              <button type="button" class="btn btn-sm btn-outline-info exp-filter-pill fw-semibold text-dark" data-exp="60d">
+                <i class="fa-solid fa-calendar-day me-1"></i>En ≤ 60 días
+              </button>
+              <button type="button" class="btn btn-sm btn-outline-success exp-filter-pill fw-semibold" data-exp="vigentes">
+                <i class="fa-solid fa-circle-check me-1"></i>Vigentes (>60d)
               </button>
             </div>
           </div>
+        </div>
 
-          <!-- Filtros Rápidos de Vencimiento -->
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-3 p-2 bg-light rounded-3 border">
-            <span class="small text-muted fw-bold me-1"><i class="fa-solid fa-stopwatch text-primary me-1"></i>Filtro por Vencimiento:</span>
-            <button type="button" class="btn btn-sm btn-light border exp-filter-pill active fw-semibold shadow-xs" data-exp="all">
-              Todas
-            </button>
-            <button type="button" class="btn btn-sm btn-outline-danger exp-filter-pill fw-semibold" data-exp="vencidas">
-              <i class="fa-solid fa-triangle-exclamation me-1"></i>Vencidas
-            </button>
-            <button type="button" class="btn btn-sm btn-outline-danger exp-filter-pill fw-semibold" data-exp="7d">
-              <i class="fa-solid fa-fire me-1"></i>En ≤ 7 días
-            </button>
-            <button type="button" class="btn btn-sm btn-outline-warning exp-filter-pill fw-semibold text-dark" data-exp="30d">
-              <i class="fa-solid fa-hourglass-half me-1"></i>En ≤ 30 días
-            </button>
-            <button type="button" class="btn btn-sm btn-outline-info exp-filter-pill fw-semibold text-dark" data-exp="60d">
-              <i class="fa-solid fa-calendar-day me-1"></i>En ≤ 60 días
-            </button>
-            <button type="button" class="btn btn-sm btn-outline-success exp-filter-pill fw-semibold" data-exp="vigentes">
-              <i class="fa-solid fa-circle-check me-1"></i>Vigentes (>60d)
-            </button>
-          </div>
+        <!-- Vista Móvil (Tarjetas para teléfonos < 768px / 390px) -->
+        <div id="policies-cards-container" class="d-block d-md-none mb-3"></div>
 
-        <div class="table-responsive shadow-sm">
-          <table class="table table-hover align-middle">
+        <!-- Vista Desktop (Tabla) -->
+        <div class="table-responsive shadow-sm d-none d-md-block" style="border-radius: 12px; background: #fff;">
+          <table class="table table-hover align-middle mb-0">
             <thead>
               <tr>
                 <th>Nº Póliza</th>

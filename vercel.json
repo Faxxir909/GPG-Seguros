@@ -1,9 +1,16 @@
 {
   "version": 2,
-  "buildCommand": "npm install && npm run build",
-  "framework": "nodejs",
-  "settings": {
-    "minify": true
-  }
+  "builds": [
+    {
+      "src": "server.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "/server.js"
+    }
+  ]
 }
 

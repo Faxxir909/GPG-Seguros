@@ -10,16 +10,16 @@ const dbUrl = process.env.DATABASE_URL ||
               process.env.POSTGRESQL_URL;
 
 const pgHost = process.env.PGHOST || process.env.PG_HOST;
-const isPgEnv = Boolean(dbUrl || (pgHost && pgHost !== 'localhost' && pgHost !== '127.0.0.1'));
+const isLocalHost = Boolean((dbUrl && (dbUrl.includes('localhost') || dbUrl.includes('127.0.0.1'))) || (pgHost === 'localhost' || pgHost === '127.0.0.1'));
+const isPgEnv = Boolean(dbUrl || (pgHost && !isLocalHost));
 
 let isPg = false;
 let pool = null;
 let sqliteDb = null;
 
-if (isPgEnv) {
+if (isPgEnv || isLocalHost) {
   const { Pool } = require('pg');
   const poolConfig = { max: 10, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 };
-  const isLocalHost = (dbUrl && (dbUrl.includes('localhost') || dbUrl.includes('127.0.0.1'))) || (pgHost === 'localhost' || pgHost === '127.0.0.1');
 
   if (dbUrl) {
     poolConfig.connectionString = dbUrl;
@@ -100,6 +100,69 @@ async function all(sql, params = []) {
   }
 }
 
+async function withTransaction(callback) {
+  if (isPg) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const trx = {
+        run: async (sql, params = []) => {
+          const query = convertPlaceholders(sql);
+          const isInsert = /^\s*INSERT/i.test(sql);
+          if (isInsert && !/RETURNING/i.test(sql)) {
+            const res = await client.query(query + ' RETURNING id', params);
+            return { id: res.rows[0]?.id ?? 0, changes: res.rowCount ?? 0 };
+          }
+          const res = await client.query(query, params);
+          return { id: 0, changes: res.rowCount ?? 0 };
+        },
+        get: async (sql, params = []) => {
+          const query = convertPlaceholders(sql);
+          const res = await client.query(query, params);
+          return res.rows[0];
+        },
+        all: async (sql, params = []) => {
+          const query = convertPlaceholders(sql);
+          const res = await client.query(query, params);
+          return res.rows;
+        }
+      };
+      const result = await callback(trx);
+      await client.query('COMMIT');
+      return result;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  } else {
+    // SQLite
+    await run('BEGIN TRANSACTION');
+    try {
+      const trx = { run, get, all };
+      const result = await callback(trx);
+      await run('COMMIT');
+      return result;
+    } catch (err) {
+      try { await run('ROLLBACK'); } catch {}
+      throw err;
+    }
+  }
+}
+
+async function updateExpiredPolicies() {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const result = await run("UPDATE polizas SET estado = 'vencida' WHERE estado = 'vigente' AND fecha_vencimiento < ?", [today]);
+    if (result && result.changes > 0) {
+      console.log(`[DB Maintenance]: Se actualizaron ${result.changes} pólizas vencidas a estado 'vencida'.`);
+    }
+  } catch (err) {
+    console.error('[DB Maintenance Warning]: Error al actualizar pólizas vencidas:', err.message);
+  }
+}
+
 async function initDatabase() {
   if (isPgEnv) {
     try {
@@ -129,15 +192,20 @@ async function initDatabase() {
         }
       }
       await seedTasasComision();
+      await updateExpiredPolicies();
       console.log('Base de datos PostgreSQL lista.');
       return;
     } catch (err) {
-      console.warn('[DB Fallback]: No se pudo conectar a PostgreSQL (', err.message, '). Cambiando a SQLite...');
+      if (process.env.NODE_ENV === 'production' || !isLocalHost) {
+        console.error('[DB Fatal]: No se pudo conectar a PostgreSQL en entorno productivo/remoto configurado:', err.message);
+        throw new Error(`[DB Connection Failed]: Falló conexión PostgreSQL. No se iniciará en fallback SQLite para evitar operar sobre una base de datos local vacía o inconsistente. Error: ${err.message}`);
+      }
+      console.warn('[DB Fallback]: No se pudo conectar a PostgreSQL local (', err.message, '). Iniciando con SQLite para desarrollo...');
       isPg = false;
     }
   }
 
-  // Fallback SQLite
+  // Fallback SQLite (solo en entorno de desarrollo local sin Postgres configurado)
   console.log('[DB Engine]: Inicializando SQLite (gpg_seguros.db)');
   const sqlite3 = require('sqlite3').verbose();
   const dbPath = path.join(__dirname, 'gpg_seguros.db');
@@ -153,6 +221,7 @@ async function initDatabase() {
     await seedCatalogo();
   }
   await seedTasasComision();
+  await updateExpiredPolicies();
   console.log('Base de datos SQLite lista.');
 }
 
@@ -467,7 +536,12 @@ async function seedCatalogo() {
 }
 
 async function seedDatabase() {
-  console.log('Iniciando carga de datos semilla (usuarios)...');
+  if (process.env.NODE_ENV === 'production' && process.env.SEED_DEFAULT_USERS !== 'true') {
+    console.log('[DB Info]: Modo producción activo: No se cargaron usuarios por defecto (admin/productor/administrativo).');
+    return;
+  }
+
+  console.log('Iniciando carga de datos semilla (usuarios de desarrollo)...');
   const hashAdmin = bcrypt.hashSync('admin123', 10);
   const hashProd  = bcrypt.hashSync('prod123', 10);
   const hashAdm   = bcrypt.hashSync('adm123', 10);
@@ -484,4 +558,4 @@ async function seedDatabase() {
   console.log('Usuarios base inicializados con éxito.');
 }
 
-module.exports = { pool, run, get, all, initDatabase };
+module.exports = { pool, run, get, all, initDatabase, withTransaction, updateExpiredPolicies };

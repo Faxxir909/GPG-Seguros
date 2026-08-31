@@ -1,21 +1,54 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const cookieParser = require('cookie-parser');
 const path = require('path');
 const fs = require('fs');
 const fileUpload = require('express-fileupload');
 const morgan = require('morgan');
 const db = require('./db');
+const { checkRole } = require('./middlewares/auth');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Cabeceras de seguridad HTTP con Helmet (permitiendo CDNs externos para estilos/scripts)
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false
+}));
+
 // Registrar logger HTTP
 app.use(morgan('dev'));
 
-// Habilitar CORS con credenciales (necesario para cookies)
-app.use(cors({ origin: true, credentials: true }));
+// Habilitar CORS con lista cerrada de orígenes y credenciales
+const allowedOrigins = process.env.ALLOWED_ORIGINS 
+  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()) 
+  : ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:5173'];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+      return callback(null, true);
+    }
+    callback(new Error('Acceso bloqueado por política CORS'));
+  },
+  credentials: true
+}));
+
+// Limitador de intentos de login para proteger contra ataques de fuerza bruta
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 20, // Máximo 20 intentos por IP en 15 min
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Demasiados intentos de autenticación. Por favor intente nuevamente en 15 minutos.' }
+});
+
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/google', authLimiter);
 
 // Cookie parser (para leer httpOnly cookies del JWT)
 app.use(cookieParser());
@@ -34,8 +67,15 @@ app.use(fileUpload({
 // Servir archivos estáticos del frontend
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Servir archivos cargados de documentación digital
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Servir archivos cargados de documentación digital mediante RUTA PROTEGIDA (requiere autenticación)
+app.use('/uploads', checkRole(['admin', 'productor', 'administrativo']), (req, res) => {
+  const safeFilename = path.basename(req.path);
+  const filePath = path.join(__dirname, 'uploads', safeFilename);
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'Archivo adjunto no encontrado.' });
+  }
+  res.sendFile(filePath);
+});
 
 // Rutas de la API
 const apiRouter = require('./routes/api');

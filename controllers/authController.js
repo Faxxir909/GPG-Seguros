@@ -3,9 +3,14 @@ const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
 const db = require('../db');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'gpg_seguros_secret_key_12345';
+const DEFAULT_SECRET = 'gpg_seguros_secret_key_12345';
+const JWT_SECRET = process.env.JWT_SECRET || DEFAULT_SECRET;
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const client = new OAuth2Client(GOOGLE_CLIENT_ID);
+
+if (process.env.NODE_ENV === 'production' && (!process.env.JWT_SECRET || process.env.JWT_SECRET === DEFAULT_SECRET)) {
+  console.error('[SECURITY WARNING]: JWT_SECRET no está configurado de forma segura en producción.');
+}
 
 // Opciones de la cookie httpOnly (segura, no accesible desde JS)
 const COOKIE_OPTIONS = {
@@ -25,20 +30,17 @@ function issueToken(user) {
 
 async function login(req, res) {
   const { usuario, password } = req.body;
-  console.log('[Login Attempt]:', { usuario, passwordLength: password ? password.length : 0 });
   try {
     if (!usuario || !password) {
       return res.status(400).json({ error: 'Usuario y contraseña son requeridos.' });
     }
 
     const user = await db.get('SELECT * FROM usuarios WHERE usuario = ?', [usuario]);
-    console.log('[Login DB User]:', user ? { id: user.id, usuario: user.usuario, hasPassword: !!user.password } : 'Not found');
     if (!user) {
       return res.status(400).json({ error: 'Usuario o contraseña incorrectos.' });
     }
 
     const isMatch = bcrypt.compareSync(password, user.password);
-    console.log('[Login Bcrypt Match]:', isMatch);
     if (!isMatch) {
       return res.status(400).json({ error: 'Usuario o contraseña incorrectos.' });
     }
@@ -80,18 +82,14 @@ async function googleLogin(req, res) {
 
     const payload = ticket.getPayload();
     const email = payload['email'];
-    const nombre = payload['name'] || email;
 
-    let user = await db.get('SELECT * FROM usuarios WHERE usuario = ?', [email]);
+    const user = await db.get('SELECT * FROM usuarios WHERE usuario = ?', [email]);
 
     if (!user) {
-      const dummyPassword = bcrypt.hashSync(Math.random().toString(36), 10);
-      const result = await db.run(
-        'INSERT INTO usuarios (usuario, password, rol, nombre) VALUES (?, ?, ?, ?)',
-        [email, dummyPassword, 'productor', nombre]
-      );
-      user = { id: result.id, usuario: email, rol: 'productor', nombre };
-      console.log(`[Google Auth]: Nuevo usuario registrado: ${email}`);
+      console.warn(`[Google Auth Warning]: Intento de inicio de sesión con cuenta de Google no autorizada: ${email}`);
+      return res.status(403).json({
+        error: 'Acceso no autorizado. Su cuenta de Google (' + email + ') no se encuentra dada de alta en el sistema. Solicite acceso al administrador.'
+      });
     }
 
     const token = issueToken(user);

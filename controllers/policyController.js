@@ -2,14 +2,79 @@ const db = require('../db');
 const { getCommissionRate } = require('../services/commissionService');
 
 async function getPolicies(req, res, next) {
+  const { page, limit, search, estado, compania, vencimiento } = req.query;
   try {
-    const policies = await db.all(`
-      SELECT p.*, c.nombre as cliente_nombre, v.marca, v.modelo, v.patente, v.motor, v.chasis
+    let sql = `
+      SELECT p.*, c.nombre as cliente_nombre, c.telefono as cliente_telefono, v.marca, v.modelo, v.patente, v.motor, v.chasis
       FROM polizas p
       JOIN clientes c ON p.cliente_id = c.id
       LEFT JOIN vehiculos v ON p.vehiculo_id = v.id
-      ORDER BY p.fecha_vencimiento ASC
-    `);
+      WHERE 1=1
+    `;
+    const params = [];
+
+    if (search) {
+      sql += ` AND (p.numero_poliza LIKE ? OR c.nombre LIKE ? OR v.patente LIKE ?)`;
+      const s = `%${search}%`;
+      params.push(s, s, s);
+    }
+    if (estado) {
+      sql += ` AND p.estado = ?`;
+      params.push(estado);
+    }
+    if (compania) {
+      sql += ` AND p.compania = ?`;
+      params.push(compania);
+    }
+    if (vencimiento) {
+      const hoy = new Date().toISOString().split('T')[0];
+      if (vencimiento === 'vencidas') {
+        sql += ` AND (p.fecha_vencimiento < ? OR p.estado = 'vencida')`;
+        params.push(hoy);
+      } else if (vencimiento === '7d') {
+        const d7 = new Date(); d7.setDate(d7.getDate() + 7);
+        sql += ` AND p.fecha_vencimiento >= ? AND p.fecha_vencimiento <= ?`;
+        params.push(hoy, d7.toISOString().split('T')[0]);
+      } else if (vencimiento === '30d') {
+        const d30 = new Date(); d30.setDate(d30.getDate() + 30);
+        sql += ` AND p.fecha_vencimiento >= ? AND p.fecha_vencimiento <= ?`;
+        params.push(hoy, d30.toISOString().split('T')[0]);
+      } else if (vencimiento === '60d') {
+        const d60 = new Date(); d60.setDate(d60.getDate() + 60);
+        sql += ` AND p.fecha_vencimiento >= ? AND p.fecha_vencimiento <= ?`;
+        params.push(hoy, d60.toISOString().split('T')[0]);
+      } else if (vencimiento === 'vigentes') {
+        const d60 = new Date(); d60.setDate(d60.getDate() + 60);
+        sql += ` AND p.fecha_vencimiento > ? AND p.estado = 'vigente'`;
+        params.push(d60.toISOString().split('T')[0]);
+      }
+    }
+
+    sql += ` ORDER BY p.fecha_vencimiento ASC`;
+
+    if (limit) {
+      const parsedLimit = parseInt(limit);
+      const parsedPage = page ? parseInt(page) : 1;
+      const offset = (parsedPage - 1) * parsedLimit;
+
+      const countSql = `SELECT COUNT(*) as count FROM (` + sql + `) as count_q`;
+      const countRes = await db.get(countSql, params);
+      const total = parseInt(countRes?.count || 0);
+
+      sql += ` LIMIT ? OFFSET ?`;
+      params.push(parsedLimit, offset);
+
+      const policies = await db.all(sql, params);
+      return res.json({
+        data: policies,
+        total,
+        page: parsedPage,
+        limit: parsedLimit,
+        totalPages: Math.ceil(total / parsedLimit) || 1
+      });
+    }
+
+    const policies = await db.all(sql, params);
     res.json(policies);
   } catch (err) {
     next(err);
@@ -27,26 +92,30 @@ async function createPolicy(req, res, next) {
   }
 
   try {
-    const result = await db.run(`
-      INSERT INTO polizas (numero_poliza, numero_renovacion, fecha_inicio, fecha_vencimiento, cobertura, estado, monto_total, valor_cuota, forma_pago, compania, cliente_id, vehiculo_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [numero_poliza, numRen, fecha_inicio, fecha_vencimiento, cobertura, estado, monto_total, valor_cuota, forma_pago, compania, cliente_id, vehiculo_id]);
-
-    // Crear registro automático de comisión según la tasa configurada para la compañía
     const cuotaVal = parseFloat(valor_cuota || monto_total || 0);
     const tasa = await getCommissionRate(compania, cobertura);
     const montoComision = cuotaVal * tasa;
     const periodo = fecha_inicio.substring(0, 7);
-    await db.run(`
-      INSERT INTO comisiones (poliza_id, compania, monto_poliza, tasa_comision, monto_comision, estado_pago, periodo)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `, [result.id, compania, parseFloat(monto_total || cuotaVal || 0), tasa, montoComision, 'pendiente', periodo]);
 
-    // Agregar registro histórico al cliente
-    await db.run(`
-      INSERT INTO crm_logs (cliente_id, tipo_contacto, descripcion)
-      VALUES (?, 'nota', ?)
-    `, [cliente_id, `Se emitió la póliza Nº ${numero_poliza} (${compania}) para el vehículo.`]);
+    // Ejecutar creación de póliza, comisión y registro histórico dentro de una transacción ACID atómica
+    const result = await db.withTransaction(async (trx) => {
+      const polRes = await trx.run(`
+        INSERT INTO polizas (numero_poliza, numero_renovacion, fecha_inicio, fecha_vencimiento, cobertura, estado, monto_total, valor_cuota, forma_pago, compania, cliente_id, vehiculo_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [numero_poliza, numRen, fecha_inicio, fecha_vencimiento, cobertura, estado, monto_total, valor_cuota, forma_pago, compania, cliente_id, vehiculo_id]);
+
+      await trx.run(`
+        INSERT INTO comisiones (poliza_id, compania, monto_poliza, tasa_comision, monto_comision, estado_pago, periodo)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `, [polRes.id, compania, parseFloat(monto_total || cuotaVal || 0), tasa, montoComision, 'pendiente', periodo]);
+
+      await trx.run(`
+        INSERT INTO crm_logs (cliente_id, tipo_contacto, descripcion)
+        VALUES (?, 'nota', ?)
+      `, [cliente_id, `Se emitió la póliza Nº ${numero_poliza} (${compania}) para el vehículo.`]);
+
+      return polRes;
+    });
 
     res.status(201).json({ id: result.id, message: 'Póliza emitida con éxito' });
   } catch (err) {
@@ -61,22 +130,24 @@ async function updatePolicy(req, res, next) {
     const valCuota = parseFloat(valor_cuota || 0);
     const montoTot = parseFloat(monto_total || 0) || valCuota;
 
-    await db.run(`
-      UPDATE polizas
-      SET numero_poliza = ?, fecha_inicio = ?, fecha_vencimiento = ?, cobertura = ?, estado = ?, monto_total = ?, valor_cuota = ?, forma_pago = ?, compania = ?
-      WHERE id = ?
-    `, [numero_poliza, fecha_inicio, fecha_vencimiento, cobertura, estado, montoTot, valCuota, forma_pago, compania, req.params.id]);
-
-    const pol = await db.get('SELECT vehiculo_id FROM polizas WHERE id = ?', [req.params.id]);
-    const targetVehId = vehiculo_id || (pol ? pol.vehiculo_id : null);
-
-    if (targetVehId && (motor !== undefined || chasis !== undefined)) {
-      await db.run(`
-        UPDATE vehiculos
-        SET motor = COALESCE(?, motor), chasis = COALESCE(?, chasis)
+    await db.withTransaction(async (trx) => {
+      await trx.run(`
+        UPDATE polizas
+        SET numero_poliza = ?, fecha_inicio = ?, fecha_vencimiento = ?, cobertura = ?, estado = ?, monto_total = ?, valor_cuota = ?, forma_pago = ?, compania = ?
         WHERE id = ?
-      `, [motor ? String(motor).trim() : null, chasis ? String(chasis).trim() : null, targetVehId]);
-    }
+      `, [numero_poliza, fecha_inicio, fecha_vencimiento, cobertura, estado, montoTot, valCuota, forma_pago, compania, req.params.id]);
+
+      const pol = await trx.get('SELECT vehiculo_id FROM polizas WHERE id = ?', [req.params.id]);
+      const targetVehId = vehiculo_id || (pol ? pol.vehiculo_id : null);
+
+      if (targetVehId && (motor !== undefined || chasis !== undefined)) {
+        await trx.run(`
+          UPDATE vehiculos
+          SET motor = COALESCE(?, motor), chasis = COALESCE(?, chasis)
+          WHERE id = ?
+        `, [motor ? String(motor).trim() : null, chasis ? String(chasis).trim() : null, targetVehId]);
+      }
+    });
 
     res.json({ message: 'Póliza actualizada con éxito' });
   } catch (err) {
@@ -114,41 +185,47 @@ async function renewPolicy(req, res, next) {
     const nuevoMontoTotal = oldPolicy.monto_total * factorInflacion;
     const nuevoValorCuota = oldPolicy.valor_cuota * factorInflacion;
 
-    const result = await db.run(`
-      INSERT INTO polizas (numero_poliza, numero_renovacion, fecha_inicio, fecha_vencimiento, cobertura, estado, monto_total, valor_cuota, forma_pago, compania, cliente_id, vehiculo_id)
-      VALUES (?, ?, ?, ?, ?, 'vigente', ?, ?, ?, ?, ?, ?)
-    `, [
-      nuevoNumero,
-      nuevoNumRen,
-      format(nuevaFechaInicio),
-      format(nuevaFechaVencimiento),
-      oldPolicy.cobertura,
-      nuevoMontoTotal,
-      nuevoValorCuota,
-      oldPolicy.forma_pago,
-      oldPolicy.compania,
-      oldPolicy.cliente_id,
-      oldPolicy.vehiculo_id
-    ]);
-
-    await db.run("UPDATE polizas SET estado = 'vencida' WHERE id = ?", [oldPolicy.id]);
-
     const tasa = await getCommissionRate(oldPolicy.compania, oldPolicy.cobertura);
     const montoComision = nuevoValorCuota * tasa;
     const periodo = format(nuevaFechaInicio).substring(0, 7);
-    await db.run(`
-      INSERT INTO comisiones (poliza_id, compania, monto_poliza, tasa_comision, monto_comision, estado_pago, periodo)
-      VALUES (?, ?, ?, ?, ?, 'pendiente', ?)
-    `, [result.id, oldPolicy.compania, nuevoMontoTotal, tasa, montoComision, periodo]);
 
     const descripcionLog = tipo === 'cuatrimestral' 
       ? `Renovación cuatrimestral de póliza Nº ${oldPolicy.numero_poliza} (Ren. ${nuevoNumRen}).`
       : `Renovación anual de póliza Nº ${oldPolicy.numero_poliza}. Nueva póliza emitida: ${nuevoNumero}`;
 
-    await db.run(`
-      INSERT INTO crm_logs (cliente_id, tipo_contacto, descripcion)
-      VALUES (?, 'nota', ?)
-    `, [oldPolicy.cliente_id, descripcionLog]);
+    // Ejecutar renovación en una transacción atómica
+    const result = await db.withTransaction(async (trx) => {
+      const newPolRes = await trx.run(`
+        INSERT INTO polizas (numero_poliza, numero_renovacion, fecha_inicio, fecha_vencimiento, cobertura, estado, monto_total, valor_cuota, forma_pago, compania, cliente_id, vehiculo_id)
+        VALUES (?, ?, ?, ?, ?, 'vigente', ?, ?, ?, ?, ?, ?)
+      `, [
+        nuevoNumero,
+        nuevoNumRen,
+        format(nuevaFechaInicio),
+        format(nuevaFechaVencimiento),
+        oldPolicy.cobertura,
+        nuevoMontoTotal,
+        nuevoValorCuota,
+        oldPolicy.forma_pago,
+        oldPolicy.compania,
+        oldPolicy.cliente_id,
+        oldPolicy.vehiculo_id
+      ]);
+
+      await trx.run("UPDATE polizas SET estado = 'vencida' WHERE id = ?", [oldPolicy.id]);
+
+      await trx.run(`
+        INSERT INTO comisiones (poliza_id, compania, monto_poliza, tasa_comision, monto_comision, estado_pago, periodo)
+        VALUES (?, ?, ?, ?, ?, 'pendiente', ?)
+      `, [newPolRes.id, oldPolicy.compania, nuevoMontoTotal, tasa, montoComision, periodo]);
+
+      await trx.run(`
+        INSERT INTO crm_logs (cliente_id, tipo_contacto, descripcion)
+        VALUES (?, 'nota', ?)
+      `, [oldPolicy.cliente_id, descripcionLog]);
+
+      return newPolRes;
+    });
 
     res.json({ id: result.id, message: 'Póliza renovada con éxito' });
   } catch (err) {

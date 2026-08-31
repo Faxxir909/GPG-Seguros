@@ -69,7 +69,7 @@ function renderInstallmentsTable() {
       badgeStatus = '<span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle"><i class="fa-regular fa-clock me-1"></i>Pendiente</span>';
     }
 
-    const cleanTel = activePolicyData.cliente_telefono ? String(activePolicyData.cliente_telefono).replace(/[^0-9]/g, '') : '';
+    const cleanTel = normalizeArgentinePhone(activePolicyData.cliente_telefono);
     const waReminderMsg = encodeURIComponent(`Hola ${activePolicyData.cliente_nombre}, te recordamos desde GPG Seguros que la cuota ${c.numero_cuota}/${c.total_cuotas} de tu póliza Nº ${activePolicyData.numero_poliza} (${activePolicyData.compania}) por ${formatMoney(c.monto)} vence el ${formatDate(c.fecha_vencimiento)}. ¿Te acercamos los datos de pago?`);
     const waBtn = (c.estado !== 'pagada' && cleanTel) ? `
       <a href="https://wa.me/${cleanTel}?text=${waReminderMsg}" target="_blank" class="btn btn-sm btn-outline-success py-1" title="Enviar recordatorio de cuota por WhatsApp">
