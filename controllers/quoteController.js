@@ -25,16 +25,18 @@ async function createQuote(req, res, next) {
   }
 
   try {
-    const result = await db.run(`
-      INSERT INTO cotizaciones (cliente_id, vehiculo_id, compania, cobertura, monto_total, valor_cuota, estado, notas)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `, [cliente_id, vehiculo_id, compania, cobertura, monto_total, valor_cuota, estado || 'pendiente', notas]);
+    const result = await db.withTransaction(async trx => {
+      const quote = await trx.run(`
+        INSERT INTO cotizaciones (cliente_id, vehiculo_id, compania, cobertura, monto_total, valor_cuota, estado, notas)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `, [cliente_id, vehiculo_id, compania, cobertura, monto_total, valor_cuota, estado || 'pendiente', notas]);
 
-    // Historial
-    await db.run(`
-      INSERT INTO crm_logs (cliente_id, tipo_contacto, descripcion)
-      VALUES (?, 'whatsapp', ?)
-    `, [cliente_id, `Se generó presupuesto de cotización para ${compania} (${cobertura}).`]);
+      await trx.run(`
+        INSERT INTO crm_logs (cliente_id, tipo_contacto, descripcion)
+        VALUES (?, 'whatsapp', ?)
+      `, [cliente_id, `Se generó presupuesto de cotización para ${compania} (${cobertura}).`]);
+      return quote;
+    }, { userId: req.user?.id, requestId: req.id });
 
     res.status(201).json({ id: result.id, message: 'Cotización guardada con éxito' });
   } catch (err) {
@@ -65,48 +67,41 @@ async function convertQuote(req, res, next) {
   }
 
   try {
-    const quote = await db.get('SELECT * FROM cotizaciones WHERE id = ?', [req.params.id]);
-    if (!quote) {
-      const error = new Error('Cotización no encontrada');
-      error.status = 404;
-      return next(error);
-    }
+    const result = await db.withTransaction(async trx => {
+      const quote = await trx.get('SELECT * FROM cotizaciones WHERE id = ? FOR UPDATE', [req.params.id]);
+      if (!quote) {
+        const error = new Error('Cotización no encontrada');
+        error.status = 404;
+        throw error;
+      }
+      if (quote.estado === 'aceptada') {
+        const error = new Error('La cotización ya fue convertida anteriormente.');
+        error.status = 409;
+        throw error;
+      }
 
-    // Insertar póliza
-    const result = await db.run(`
-      INSERT INTO polizas (numero_poliza, numero_renovacion, fecha_inicio, fecha_vencimiento, cobertura, estado, monto_total, valor_cuota, forma_pago, compania, cliente_id, vehiculo_id)
-      VALUES (?, 0, ?, ?, ?, 'vigente', ?, ?, ?, ?, ?, ?)
-    `, [
-      numero_poliza,
-      fecha_inicio,
-      fecha_vencimiento,
-      quote.cobertura,
-      quote.monto_total,
-      quote.valor_cuota,
-      forma_pago,
-      quote.compania,
-      quote.cliente_id,
-      quote.vehiculo_id
-    ]);
+      const policy = await trx.run(`
+        INSERT INTO polizas (numero_poliza, numero_renovacion, fecha_inicio, fecha_vencimiento, cobertura, estado, monto_total, valor_cuota, forma_pago, compania, cliente_id, vehiculo_id)
+        VALUES (?, 0, ?, ?, ?, 'vigente', ?, ?, ?, ?, ?, ?)
+      `, [numero_poliza, fecha_inicio, fecha_vencimiento, quote.cobertura, quote.monto_total,
+        quote.valor_cuota, forma_pago, quote.compania, quote.cliente_id, quote.vehiculo_id]);
 
-    // Actualizar cotización a aceptada
-    await db.run("UPDATE cotizaciones SET estado = 'aceptada' WHERE id = ?", [quote.id]);
+      await trx.run("UPDATE cotizaciones SET estado = 'aceptada' WHERE id = ?", [quote.id]);
 
-    // Comisión
-    const cuotaVal = parseFloat(quote.valor_cuota || quote.monto_total || 0);
-    const tasa = await getCommissionRate(quote.compania, quote.cobertura);
-    const montoComision = cuotaVal * tasa;
-    const periodo = fecha_inicio.substring(0, 7);
-    await db.run(`
-      INSERT INTO comisiones (poliza_id, compania, monto_poliza, tasa_comision, monto_comision, estado_pago, periodo)
-      VALUES (?, ?, ?, ?, ?, 'pendiente', ?)
-    `, [result.id, quote.compania, parseFloat(quote.monto_total || cuotaVal || 0), tasa, montoComision, periodo]);
+      const cuotaVal = Number.parseFloat(quote.valor_cuota || quote.monto_total || 0);
+      const tasa = await getCommissionRate(quote.compania, quote.cobertura, trx);
+      await trx.run(`
+        INSERT INTO comisiones (poliza_id, compania, monto_poliza, tasa_comision, monto_comision, estado_pago, periodo)
+        VALUES (?, ?, ?, ?, ?, 'pendiente', ?)
+      `, [policy.id, quote.compania, Number.parseFloat(quote.monto_total || cuotaVal || 0),
+        tasa, cuotaVal * tasa, fecha_inicio.substring(0, 7)]);
 
-    // Historial
-    await db.run(`
-      INSERT INTO crm_logs (cliente_id, tipo_contacto, descripcion)
-      VALUES (?, 'nota', ?)
-    `, [quote.cliente_id, `Cotización aceptada y convertida a Póliza Nº ${numero_poliza} (${quote.compania}).`]);
+      await trx.run(`
+        INSERT INTO crm_logs (cliente_id, tipo_contacto, descripcion)
+        VALUES (?, 'nota', ?)
+      `, [quote.cliente_id, `Cotización aceptada y convertida a Póliza Nº ${numero_poliza} (${quote.compania}).`]);
+      return policy;
+    }, { userId: req.user?.id, requestId: req.id });
 
     res.json({ id: result.id, message: 'Cotización convertida en póliza con éxito' });
   } catch (err) {
@@ -116,8 +111,13 @@ async function convertQuote(req, res, next) {
 
 async function deleteQuote(req, res, next) {
   try {
-    await db.run('DELETE FROM cotizaciones WHERE id = ?', [req.params.id]);
-    res.json({ message: 'Cotización eliminada con éxito' });
+    const result = await db.run("UPDATE cotizaciones SET estado = 'rechazada' WHERE id = ? AND estado <> 'rechazada'", [req.params.id]);
+    if (!result.changes) {
+      const error = new Error('Cotización no encontrada o ya rechazada');
+      error.status = 404;
+      return next(error);
+    }
+    res.json({ message: 'Cotización archivada como rechazada.' });
   } catch (err) {
     next(err);
   }

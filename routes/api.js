@@ -87,6 +87,8 @@ router.put('/commissions/:id', checkRole(['admin']), commissionController.update
 router.get('/commission-rates', checkRole(['admin', 'productor']), commissionController.getCommissionRates);
 router.post('/commission-rates', checkRole(['admin']), commissionController.upsertCommissionRate);
 
+const reportController = require('../controllers/reportController');
+
 // 11. SUBIDA DE ARCHIVOS
 router.post('/upload', checkRole(['admin', 'productor', 'administrativo']), uploadController.uploadFile);
 
@@ -97,6 +99,10 @@ router.get('/search/global', checkRole(['admin', 'productor', 'administrativo'])
 router.get('/policies/:id/payments', checkRole(['admin', 'productor', 'administrativo']), paymentController.getPolicyInstallments);
 router.put('/payments/:id', checkRole(['admin', 'productor', 'administrativo']), paymentController.updateInstallment);
 router.get('/payments/summary', checkRole(['admin', 'productor', 'administrativo']), paymentController.getCollectionSummary);
+
+// 14. REPORTES (PDF Y EXCEL)
+router.get('/reports/excel', checkRole(['admin', 'productor']), reportController.exportExcel);
+router.get('/reports/pdf', checkRole(['admin', 'productor']), reportController.exportPdf);
 
 module.exports = router;
 

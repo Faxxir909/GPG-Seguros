@@ -14,7 +14,7 @@ async function getPolicies(req, res, next) {
     const params = [];
 
     if (search) {
-      sql += ` AND (p.numero_poliza LIKE ? OR c.nombre LIKE ? OR v.patente LIKE ?)`;
+      sql += ` AND (p.numero_poliza ILIKE ? OR c.nombre ILIKE ? OR v.patente ILIKE ?)`;
       const s = `%${search}%`;
       params.push(s, s, s);
     }
@@ -27,34 +27,24 @@ async function getPolicies(req, res, next) {
       params.push(compania);
     }
     if (vencimiento) {
-      const hoy = new Date().toISOString().split('T')[0];
       if (vencimiento === 'vencidas') {
-        sql += ` AND (p.fecha_vencimiento < ? OR p.estado = 'vencida')`;
-        params.push(hoy);
+        sql += ` AND (p.fecha_vencimiento < CURRENT_DATE OR p.estado = 'vencida')`;
       } else if (vencimiento === '7d') {
-        const d7 = new Date(); d7.setDate(d7.getDate() + 7);
-        sql += ` AND p.fecha_vencimiento >= ? AND p.fecha_vencimiento <= ?`;
-        params.push(hoy, d7.toISOString().split('T')[0]);
+        sql += ` AND p.fecha_vencimiento BETWEEN CURRENT_DATE AND CURRENT_DATE + 7`;
       } else if (vencimiento === '30d') {
-        const d30 = new Date(); d30.setDate(d30.getDate() + 30);
-        sql += ` AND p.fecha_vencimiento >= ? AND p.fecha_vencimiento <= ?`;
-        params.push(hoy, d30.toISOString().split('T')[0]);
+        sql += ` AND p.fecha_vencimiento BETWEEN CURRENT_DATE AND CURRENT_DATE + 30`;
       } else if (vencimiento === '60d') {
-        const d60 = new Date(); d60.setDate(d60.getDate() + 60);
-        sql += ` AND p.fecha_vencimiento >= ? AND p.fecha_vencimiento <= ?`;
-        params.push(hoy, d60.toISOString().split('T')[0]);
+        sql += ` AND p.fecha_vencimiento BETWEEN CURRENT_DATE AND CURRENT_DATE + 60`;
       } else if (vencimiento === 'vigentes') {
-        const d60 = new Date(); d60.setDate(d60.getDate() + 60);
-        sql += ` AND p.fecha_vencimiento > ? AND p.estado = 'vigente'`;
-        params.push(d60.toISOString().split('T')[0]);
+        sql += ` AND p.fecha_vencimiento > CURRENT_DATE + 60 AND p.estado = 'vigente'`;
       }
     }
 
     sql += ` ORDER BY p.fecha_vencimiento ASC`;
 
     if (limit) {
-      const parsedLimit = parseInt(limit);
-      const parsedPage = page ? parseInt(page) : 1;
+      const parsedLimit = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 15));
+      const parsedPage = Math.max(1, Number.parseInt(page, 10) || 1);
       const offset = (parsedPage - 1) * parsedLimit;
 
       const countSql = `SELECT COUNT(*) as count FROM (` + sql + `) as count_q`;
@@ -93,12 +83,12 @@ async function createPolicy(req, res, next) {
 
   try {
     const cuotaVal = parseFloat(valor_cuota || monto_total || 0);
-    const tasa = await getCommissionRate(compania, cobertura);
-    const montoComision = cuotaVal * tasa;
     const periodo = fecha_inicio.substring(0, 7);
 
     // Ejecutar creación de póliza, comisión y registro histórico dentro de una transacción ACID atómica
     const result = await db.withTransaction(async (trx) => {
+      const tasa = await getCommissionRate(compania, cobertura, trx);
+      const montoComision = cuotaVal * tasa;
       const polRes = await trx.run(`
         INSERT INTO polizas (numero_poliza, numero_renovacion, fecha_inicio, fecha_vencimiento, cobertura, estado, monto_total, valor_cuota, forma_pago, compania, cliente_id, vehiculo_id)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -115,7 +105,7 @@ async function createPolicy(req, res, next) {
       `, [cliente_id, `Se emitió la póliza Nº ${numero_poliza} (${compania}) para el vehículo.`]);
 
       return polRes;
-    });
+    }, { userId: req.user?.id, requestId: req.id });
 
     res.status(201).json({ id: result.id, message: 'Póliza emitida con éxito' });
   } catch (err) {
@@ -147,7 +137,7 @@ async function updatePolicy(req, res, next) {
           WHERE id = ?
         `, [motor ? String(motor).trim() : null, chasis ? String(chasis).trim() : null, targetVehId]);
       }
-    });
+    }, { userId: req.user?.id, requestId: req.id });
 
     res.json({ message: 'Póliza actualizada con éxito' });
   } catch (err) {
@@ -185,8 +175,6 @@ async function renewPolicy(req, res, next) {
     const nuevoMontoTotal = oldPolicy.monto_total * factorInflacion;
     const nuevoValorCuota = oldPolicy.valor_cuota * factorInflacion;
 
-    const tasa = await getCommissionRate(oldPolicy.compania, oldPolicy.cobertura);
-    const montoComision = nuevoValorCuota * tasa;
     const periodo = format(nuevaFechaInicio).substring(0, 7);
 
     const descripcionLog = tipo === 'cuatrimestral' 
@@ -195,6 +183,14 @@ async function renewPolicy(req, res, next) {
 
     // Ejecutar renovación en una transacción atómica
     const result = await db.withTransaction(async (trx) => {
+      const lockedPolicy = await trx.get('SELECT id FROM polizas WHERE id = ? FOR UPDATE', [oldPolicy.id]);
+      if (!lockedPolicy) {
+        const error = new Error('Póliza no encontrada');
+        error.status = 404;
+        throw error;
+      }
+      const tasa = await getCommissionRate(oldPolicy.compania, oldPolicy.cobertura, trx);
+      const montoComision = nuevoValorCuota * tasa;
       const newPolRes = await trx.run(`
         INSERT INTO polizas (numero_poliza, numero_renovacion, fecha_inicio, fecha_vencimiento, cobertura, estado, monto_total, valor_cuota, forma_pago, compania, cliente_id, vehiculo_id)
         VALUES (?, ?, ?, ?, ?, 'vigente', ?, ?, ?, ?, ?, ?)
@@ -225,7 +221,7 @@ async function renewPolicy(req, res, next) {
       `, [oldPolicy.cliente_id, descripcionLog]);
 
       return newPolRes;
-    });
+    }, { userId: req.user?.id, requestId: req.id });
 
     res.json({ id: result.id, message: 'Póliza renovada con éxito' });
   } catch (err) {
@@ -235,8 +231,13 @@ async function renewPolicy(req, res, next) {
 
 async function deletePolicy(req, res, next) {
   try {
-    await db.run('DELETE FROM polizas WHERE id = ?', [req.params.id]);
-    res.json({ message: 'Póliza eliminada con éxito' });
+    const result = await db.run("UPDATE polizas SET estado = 'suspendida' WHERE id = ? AND estado <> 'suspendida'", [req.params.id]);
+    if (!result.changes) {
+      const error = new Error('Póliza no encontrada o ya suspendida');
+      error.status = 404;
+      return next(error);
+    }
+    res.json({ message: 'Póliza archivada con éxito; se conservó su historial contable.' });
   } catch (err) {
     next(err);
   }

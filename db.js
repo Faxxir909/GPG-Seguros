@@ -1,43 +1,18 @@
 require('dotenv').config();
-const fs = require('fs');
-const path = require('path');
 const bcrypt = require('bcryptjs');
+const { Pool } = require('pg');
+const { buildPoolConfig, describeDatabaseTarget } = require('./database/config');
+const { runMigrations } = require('./database/migrate');
+const { getRequestContext } = require('./database/request-context');
 
-const dbUrl = process.env.DATABASE_URL || 
-              process.env.INTERNAL_DATABASE_URL || 
-              process.env.EXTERNAL_DATABASE_URL || 
-              process.env.POSTGRES_URL || 
-              process.env.POSTGRESQL_URL;
-
-const pgHost = process.env.PGHOST || process.env.PG_HOST;
-const isLocalHost = Boolean((dbUrl && (dbUrl.includes('localhost') || dbUrl.includes('127.0.0.1'))) || (pgHost === 'localhost' || pgHost === '127.0.0.1'));
-const isPgEnv = Boolean(dbUrl || (pgHost && !isLocalHost));
-
-let isPg = false;
 let pool = null;
-let sqliteDb = null;
+let initialized = false;
 
-if (isPgEnv || isLocalHost) {
-  const { Pool } = require('pg');
-  const poolConfig = { max: 10, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 };
-
-  if (dbUrl) {
-    poolConfig.connectionString = dbUrl;
-    if (!isLocalHost) {
-      poolConfig.ssl = { rejectUnauthorized: false };
-    }
-  } else {
-    poolConfig.host = pgHost;
-    poolConfig.port = parseInt(process.env.PGPORT || process.env.PG_PORT || '5432');
-    poolConfig.user = process.env.PGUSER || process.env.PG_USER || 'postgres';
-    poolConfig.password = process.env.PGPASSWORD || process.env.PG_PASSWORD || '';
-    poolConfig.database = process.env.PGDATABASE || process.env.PG_DATABASE || 'gpg_seguros';
-    if (!isLocalHost) {
-      poolConfig.ssl = { rejectUnauthorized: false };
-    }
-  }
-  pool = new Pool(poolConfig);
-  pool.on('error', (err) => console.error('PostgreSQL pool error:', err));
+function ensurePool() {
+  if (pool) return pool;
+  pool = new Pool(buildPoolConfig());
+  pool.on('error', err => console.error('[DB Pool Error]:', err.message));
+  return pool;
 }
 
 function convertPlaceholders(sql) {
@@ -46,115 +21,85 @@ function convertPlaceholders(sql) {
 }
 
 async function run(sql, params = []) {
-  if (isPg) {
-    const query = convertPlaceholders(sql);
-    const isInsert = /^\s*INSERT/i.test(sql);
-    if (isInsert && !/RETURNING/i.test(sql)) {
-      const result = await pool.query(query + ' RETURNING id', params);
-      return { id: result.rows[0]?.id ?? 0, changes: result.rowCount ?? 0 };
-    }
-    const result = await pool.query(query, params);
-    return { id: 0, changes: result.rowCount ?? 0 };
-  } else {
-    return new Promise((resolve, reject) => {
-      // Reemplazar sintaxis RETURNING o EXCLUDED de Postgres si se usa en SQLite
-      let cleanSql = sql
-        .replace(/EXCLUDED\./gi, 'excluded.')
-        .replace(/RETURNING\s+id/gi, '');
+  const query = convertPlaceholders(sql);
+  const isInsert = /^\s*INSERT/i.test(sql);
+  const finalQuery = isInsert && !/\bRETURNING\b/i.test(sql) ? `${query} RETURNING id` : query;
+  const context = getRequestContext();
 
-      sqliteDb.run(cleanSql, params, function(err) {
-        if (err) return reject(err);
-        resolve({ id: this.lastID, changes: this.changes });
-      });
-    });
-  }
-}
-
-async function get(sql, params = []) {
-  if (isPg) {
-    const query = convertPlaceholders(sql);
-    const result = await pool.query(query, params);
-    return result.rows[0];
-  } else {
-    return new Promise((resolve, reject) => {
-      sqliteDb.get(sql, params, (err, row) => {
-        if (err) return reject(err);
-        resolve(row);
-      });
-    });
-  }
-}
-
-async function all(sql, params = []) {
-  if (isPg) {
-    const query = convertPlaceholders(sql);
-    const result = await pool.query(query, params);
-    return result.rows;
-  } else {
-    return new Promise((resolve, reject) => {
-      sqliteDb.all(sql, params, (err, rows) => {
-        if (err) return reject(err);
-        resolve(rows || []);
-      });
-    });
-  }
-}
-
-async function withTransaction(callback) {
-  if (isPg) {
-    const client = await pool.connect();
+  if (context.userId || context.requestId) {
+    const client = await ensurePool().connect();
     try {
       await client.query('BEGIN');
-      const trx = {
-        run: async (sql, params = []) => {
-          const query = convertPlaceholders(sql);
-          const isInsert = /^\s*INSERT/i.test(sql);
-          if (isInsert && !/RETURNING/i.test(sql)) {
-            const res = await client.query(query + ' RETURNING id', params);
-            return { id: res.rows[0]?.id ?? 0, changes: res.rowCount ?? 0 };
-          }
-          const res = await client.query(query, params);
-          return { id: 0, changes: res.rowCount ?? 0 };
-        },
-        get: async (sql, params = []) => {
-          const query = convertPlaceholders(sql);
-          const res = await client.query(query, params);
-          return res.rows[0];
-        },
-        all: async (sql, params = []) => {
-          const query = convertPlaceholders(sql);
-          const res = await client.query(query, params);
-          return res.rows;
-        }
-      };
-      const result = await callback(trx);
+      if (context.userId) {
+        await client.query("SELECT set_config('app.usuario_id', $1, true)", [String(context.userId)]);
+      }
+      if (context.requestId) {
+        await client.query("SELECT set_config('app.request_id', $1, true)", [String(context.requestId)]);
+      }
+      const result = await client.query(finalQuery, params);
       await client.query('COMMIT');
-      return result;
-    } catch (err) {
+      return { id: result.rows[0]?.id ?? 0, changes: result.rowCount ?? 0 };
+    } catch (error) {
       await client.query('ROLLBACK');
-      throw err;
+      throw error;
     } finally {
       client.release();
     }
-  } else {
-    // SQLite
-    await run('BEGIN TRANSACTION');
-    try {
-      const trx = { run, get, all };
-      const result = await callback(trx);
-      await run('COMMIT');
-      return result;
-    } catch (err) {
-      try { await run('ROLLBACK'); } catch {}
-      throw err;
+  }
+
+  const result = await ensurePool().query(finalQuery, params);
+  return { id: result.rows[0]?.id ?? 0, changes: result.rowCount ?? 0 };
+}
+
+async function get(sql, params = []) {
+  const result = await ensurePool().query(convertPlaceholders(sql), params);
+  return result.rows[0];
+}
+
+async function all(sql, params = []) {
+  const result = await ensurePool().query(convertPlaceholders(sql), params);
+  return result.rows;
+}
+
+async function withTransaction(callback, context = {}) {
+  const requestContext = getRequestContext();
+  const effectiveContext = { ...requestContext, ...context };
+  const client = await ensurePool().connect();
+  try {
+    await client.query('BEGIN');
+    if (effectiveContext.userId) {
+      await client.query("SELECT set_config('app.usuario_id', $1, true)", [String(effectiveContext.userId)]);
     }
+    if (effectiveContext.requestId) {
+      await client.query("SELECT set_config('app.request_id', $1, true)", [String(effectiveContext.requestId)]);
+    }
+
+    const trx = {
+      run: async (sql, params = []) => {
+        const query = convertPlaceholders(sql);
+        const isInsert = /^\s*INSERT/i.test(sql);
+        const finalQuery = isInsert && !/\bRETURNING\b/i.test(sql) ? `${query} RETURNING id` : query;
+        const result = await client.query(finalQuery, params);
+        return { id: result.rows[0]?.id ?? 0, changes: result.rowCount ?? 0 };
+      },
+      get: async (sql, params = []) => (await client.query(convertPlaceholders(sql), params)).rows[0],
+      all: async (sql, params = []) => (await client.query(convertPlaceholders(sql), params)).rows
+    };
+
+    const result = await callback(trx);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
   }
 }
 
 async function updateExpiredPolicies() {
   try {
-    const today = new Date().toISOString().split('T')[0];
-    const result = await run("UPDATE polizas SET estado = 'vencida' WHERE estado = 'vigente' AND fecha_vencimiento < ?", [today]);
+    const result = await run("UPDATE polizas SET estado = 'vencida' WHERE estado = 'vigente' AND fecha_vencimiento < CURRENT_DATE");
     if (result && result.changes > 0) {
       console.log(`[DB Maintenance]: Se actualizaron ${result.changes} pólizas vencidas a estado 'vencida'.`);
     }
@@ -164,245 +109,46 @@ async function updateExpiredPolicies() {
 }
 
 async function initDatabase() {
-  if (isPgEnv) {
-    try {
-      const client = await pool.connect();
-      console.log('[DB Engine]: PostgreSQL conectado a:', client.database);
-      client.release();
-      isPg = true;
-
-      const schemaPath = path.join(__dirname, 'schema.sql');
-      if (fs.existsSync(schemaPath)) {
-        const schemaSql = fs.readFileSync(schemaPath, 'utf8');
-        try {
-          await pool.query(schemaSql);
-          console.log('Schema PostgreSQL verificado.');
-        } catch (schemaErr) {
-          console.error('[Schema Warning]:', schemaErr.message);
-        }
-      }
-
-      const userCount = await get('SELECT COUNT(*) AS count FROM usuarios');
-      if (parseInt(userCount.count) === 0) {
-        await seedDatabase();
-      } else {
-        const catalogCount = await get('SELECT COUNT(*) AS count FROM catalogo_vehiculos');
-        if (parseInt(catalogCount.count) === 0) {
-          await seedCatalogo();
-        }
-      }
-      await seedTasasComision();
-      await updateExpiredPolicies();
-      console.log('Base de datos PostgreSQL lista.');
-      return;
-    } catch (err) {
-      if (process.env.NODE_ENV === 'production' || !isLocalHost) {
-        console.error('[DB Fatal]: No se pudo conectar a PostgreSQL en entorno productivo/remoto configurado:', err.message);
-        throw new Error(`[DB Connection Failed]: Falló conexión PostgreSQL. No se iniciará en fallback SQLite para evitar operar sobre una base de datos local vacía o inconsistente. Error: ${err.message}`);
-      }
-      console.warn('[DB Fallback]: No se pudo conectar a PostgreSQL local (', err.message, '). Iniciando con SQLite para desarrollo...');
-      isPg = false;
-    }
+  if (initialized) return;
+  const activePool = ensurePool();
+  const client = await activePool.connect();
+  try {
+    const connection = await client.query('SELECT current_database() AS database, current_user AS usuario');
+    console.log(`[DB Engine]: PostgreSQL conectado (${describeDatabaseTarget()}) como ${connection.rows[0].usuario}`);
+  } finally {
+    client.release();
   }
 
-  // Fallback SQLite (solo en entorno de desarrollo local sin Postgres configurado)
-  console.log('[DB Engine]: Inicializando SQLite (gpg_seguros.db)');
-  const sqlite3 = require('sqlite3').verbose();
-  const dbPath = path.join(__dirname, 'gpg_seguros.db');
-  sqliteDb = new sqlite3.Database(dbPath);
+  await runMigrations(activePool);
 
-  await initSqliteTables();
-  const userCount = await get('SELECT COUNT(*) AS count FROM usuarios');
-  if (!userCount || parseInt(userCount.count) === 0) {
-    await seedDatabase();
-  }
   const catalogCount = await get('SELECT COUNT(*) AS count FROM catalogo_vehiculos');
-  if (!catalogCount || parseInt(catalogCount.count) === 0) {
+  if (Number.parseInt(catalogCount.count, 10) === 0) {
     await seedCatalogo();
   }
   await seedTasasComision();
+  await seedDatabase();
   await updateExpiredPolicies();
-  console.log('Base de datos SQLite lista.');
-}
-
-async function initSqliteTables() {
-  const ddl = `
-    CREATE TABLE IF NOT EXISTS usuarios (
-        id         INTEGER PRIMARY KEY AUTOINCREMENT,
-        usuario    TEXT UNIQUE NOT NULL,
-        password   TEXT NOT NULL,
-        rol        TEXT NOT NULL CHECK (rol IN ('admin', 'productor', 'administrativo')),
-        nombre     TEXT NOT NULL,
-        creado_en  DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE TABLE IF NOT EXISTS clientes (
-        id               INTEGER PRIMARY KEY AUTOINCREMENT,
-        nombre           TEXT NOT NULL,
-        dni_cuit         TEXT UNIQUE NOT NULL,
-        fecha_nacimiento DATE,
-        telefono         TEXT,
-        email            TEXT,
-        direccion        TEXT,
-        localidad        TEXT,
-        provincia        TEXT,
-        observaciones    TEXT,
-        estado           TEXT NOT NULL DEFAULT 'activo',
-        riesgo_baja      BOOLEAN NOT NULL DEFAULT 0,
-        creado_en        DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE TABLE IF NOT EXISTS vehiculos (
-        id         INTEGER PRIMARY KEY AUTOINCREMENT,
-        cliente_id INTEGER NOT NULL,
-        marca      TEXT NOT NULL,
-        modelo     TEXT NOT NULL,
-        version    TEXT,
-        anio       INTEGER,
-        patente    TEXT,
-        chasis     TEXT,
-        motor      TEXT,
-        uso        TEXT DEFAULT 'particular',
-        creado_en  DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE TABLE IF NOT EXISTS polizas (
-        id                INTEGER PRIMARY KEY AUTOINCREMENT,
-        numero_poliza     TEXT NOT NULL,
-        numero_renovacion INTEGER NOT NULL DEFAULT 0,
-        fecha_inicio      DATE NOT NULL,
-        fecha_vencimiento DATE NOT NULL,
-        cobertura         TEXT NOT NULL,
-        estado            TEXT NOT NULL DEFAULT 'vigente',
-        monto_total       REAL NOT NULL,
-        valor_cuota       REAL NOT NULL,
-        forma_pago        TEXT NOT NULL DEFAULT 'efectivo',
-        compania          TEXT NOT NULL,
-        cliente_id        INTEGER NOT NULL,
-        vehiculo_id       INTEGER,
-        creado_en         DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE TABLE IF NOT EXISTS cotizaciones (
-        id             INTEGER PRIMARY KEY AUTOINCREMENT,
-        cliente_id     INTEGER NOT NULL,
-        vehiculo_id    INTEGER,
-        compania       TEXT NOT NULL,
-        cobertura      TEXT NOT NULL,
-        monto_total    REAL NOT NULL,
-        valor_cuota    REAL NOT NULL,
-        estado         TEXT NOT NULL DEFAULT 'pendiente',
-        fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE TABLE IF NOT EXISTS siniestros (
-        id               INTEGER PRIMARY KEY AUTOINCREMENT,
-        numero_siniestro TEXT UNIQUE,
-        cliente_id       INTEGER NOT NULL,
-        vehiculo_id      INTEGER,
-        poliza_id        INTEGER,
-        fecha            DATE NOT NULL,
-        descripcion      TEXT NOT NULL,
-        estado           TEXT NOT NULL DEFAULT 'denunciado',
-        creado_en        DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE TABLE IF NOT EXISTS agenda (
-        id                INTEGER PRIMARY KEY AUTOINCREMENT,
-        cliente_id        INTEGER,
-        titulo            TEXT NOT NULL,
-        descripcion       TEXT,
-        fecha_vencimiento DATE NOT NULL,
-        tipo              TEXT NOT NULL DEFAULT 'recordatorio',
-        completado        BOOLEAN NOT NULL DEFAULT 0,
-        creado_en         DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE TABLE IF NOT EXISTS crm_logs (
-        id             INTEGER PRIMARY KEY AUTOINCREMENT,
-        cliente_id     INTEGER NOT NULL,
-        tipo_contacto  TEXT NOT NULL DEFAULT 'nota',
-        descripcion    TEXT NOT NULL,
-        fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE TABLE IF NOT EXISTS comisiones (
-        id             INTEGER PRIMARY KEY AUTOINCREMENT,
-        poliza_id      INTEGER NOT NULL,
-        compania       TEXT NOT NULL,
-        monto_poliza   REAL NOT NULL,
-        tasa_comision  REAL NOT NULL,
-        monto_comision REAL NOT NULL,
-        estado_pago    TEXT NOT NULL DEFAULT 'pendiente',
-        periodo        TEXT NOT NULL,
-        creado_en      DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE TABLE IF NOT EXISTS adjuntos (
-        id             INTEGER PRIMARY KEY AUTOINCREMENT,
-        cliente_id     INTEGER,
-        poliza_id      INTEGER,
-        siniestro_id   INTEGER,
-        nombre_archivo TEXT NOT NULL,
-        ruta_archivo   TEXT NOT NULL,
-        tipo_documento TEXT NOT NULL DEFAULT 'pdf',
-        fecha_subida   DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE TABLE IF NOT EXISTS catalogo_vehiculos (
-        id      INTEGER PRIMARY KEY AUTOINCREMENT,
-        marca   TEXT NOT NULL,
-        modelo  TEXT NOT NULL,
-        version TEXT NOT NULL,
-        UNIQUE (marca, modelo, version)
-    );
-    CREATE TABLE IF NOT EXISTS tasas_comision (
-        id             INTEGER PRIMARY KEY AUTOINCREMENT,
-        compania       TEXT NOT NULL,
-        tipo_cobertura TEXT NOT NULL DEFAULT '*',
-        tasa           REAL NOT NULL DEFAULT 0.15,
-        descripcion    TEXT,
-        activa         BOOLEAN NOT NULL DEFAULT 1,
-        creado_en      DATETIME DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE (compania, tipo_cobertura)
-    );
-    CREATE TABLE IF NOT EXISTS cuotas_cobranza (
-        id                INTEGER PRIMARY KEY AUTOINCREMENT,
-        poliza_id         INTEGER NOT NULL,
-        numero_cuota      INTEGER NOT NULL,
-        total_cuotas      INTEGER NOT NULL DEFAULT 12,
-        fecha_vencimiento DATE NOT NULL,
-        monto             REAL NOT NULL,
-        estado            TEXT NOT NULL DEFAULT 'pendiente',
-        fecha_pago        DATE,
-        forma_pago        TEXT,
-        notas             TEXT,
-        creado_en         DATETIME DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE (poliza_id, numero_cuota)
-    );
-  `;
-  return new Promise((resolve, reject) => {
-    sqliteDb.exec(ddl, (err) => {
-      if (err) return reject(err);
-      resolve();
-    });
-  });
+  initialized = true;
+  console.log('Base de datos PostgreSQL lista.');
 }
 
 async function seedTasasComision() {
-  try {
-    const count = await get('SELECT COUNT(*) as count FROM tasas_comision');
-    if (!count || parseInt(count.count) === 0) {
-      const query = `
-        INSERT INTO tasas_comision (compania, tipo_cobertura, tasa, descripcion) VALUES
-          ('Federación Patronal', '*', 0.1500, 'Tasa genérica Federación Patronal'),
-          ('Sancor Seguros', '*', 0.1500, 'Tasa genérica Sancor'),
-          ('El Norte Seguros', '*', 0.1500, 'Tasa genérica El Norte Seguros'),
-          ('La Segunda', '*', 0.1200, 'Tasa genérica La Segunda'),
-          ('Zurich', '*', 0.1400, 'Tasa genérica Zurich'),
-          ('Rivadavia', '*', 0.1300, 'Tasa genérica Rivadavia'),
-          ('San Cristóbal', '*', 0.1500, 'Tasa genérica San Cristóbal'),
-          ('Mapfre', '*', 0.1200, 'Tasa genérica Mapfre'),
-          ('Allianz', '*', 0.1400, 'Tasa genérica Allianz'),
-          ('Mercantil Andina', '*', 0.1500, 'Tasa genérica Mercantil Andina'),
-          ('Berkley', '*', 0.1300, 'Tasa genérica Berkley')
-      `;
-      await run(query);
-      console.log('Tasas de comisión de ejemplo creadas.');
-    }
-  } catch (err) {
-    console.error('Error al inicializar tasas_comision:', err.message);
-  }
+  const query = `
+    INSERT INTO tasas_comision (compania, tipo_cobertura, tasa, descripcion) VALUES
+      ('Federación Patronal', '*', 0.1500, 'Tasa genérica Federación Patronal'),
+      ('Sancor Seguros', '*', 0.1500, 'Tasa genérica Sancor'),
+      ('El Norte Seguros', '*', 0.1500, 'Tasa genérica El Norte Seguros'),
+      ('La Segunda', '*', 0.1200, 'Tasa genérica La Segunda'),
+      ('Zurich', '*', 0.1400, 'Tasa genérica Zurich'),
+      ('Rivadavia', '*', 0.1300, 'Tasa genérica Rivadavia'),
+      ('San Cristóbal', '*', 0.1500, 'Tasa genérica San Cristóbal'),
+      ('Mapfre', '*', 0.1200, 'Tasa genérica Mapfre'),
+      ('Allianz', '*', 0.1400, 'Tasa genérica Allianz'),
+      ('Mercantil Andina', '*', 0.1500, 'Tasa genérica Mercantil Andina'),
+      ('Berkley', '*', 0.1300, 'Tasa genérica Berkley')
+    ON CONFLICT (compania, tipo_cobertura) DO NOTHING
+  `;
+  await run(query);
 }
 
 async function seedCatalogo() {
@@ -536,26 +282,46 @@ async function seedCatalogo() {
 }
 
 async function seedDatabase() {
-  if (process.env.NODE_ENV === 'production' && process.env.SEED_DEFAULT_USERS !== 'true') {
-    console.log('[DB Info]: Modo producción activo: No se cargaron usuarios por defecto (admin/productor/administrativo).');
+  if (process.env.SEED_DEFAULT_USERS !== 'true') {
     return;
   }
 
-  console.log('Iniciando carga de datos semilla (usuarios de desarrollo)...');
+  console.warn('[DB Seed]: SEED_DEFAULT_USERS=true; creando únicamente usuarios de desarrollo faltantes.');
   const hashAdmin = bcrypt.hashSync('admin123', 10);
   const hashProd  = bcrypt.hashSync('prod123', 10);
   const hashAdm   = bcrypt.hashSync('adm123', 10);
 
-  try {
-    await run("INSERT INTO usuarios (usuario, password, rol, nombre) VALUES (?, ?, 'admin', 'Administrador General')", ['admin', hashAdmin]);
-  } catch {}
-  try {
-    await run("INSERT INTO usuarios (usuario, password, rol, nombre) VALUES (?, ?, 'productor', 'Pedro Pas (Productor)')", ['productor', hashProd]);
-  } catch {}
-  try {
-    await run("INSERT INTO usuarios (usuario, password, rol, nombre) VALUES (?, ?, 'administrativo', 'Ana Admin (Administrativa)')", ['administrativo', hashAdm]);
-  } catch {}
-  console.log('Usuarios base inicializados con éxito.');
+  await run("INSERT INTO usuarios (usuario, password, rol, nombre) VALUES (?, ?, 'admin', 'Administrador General') ON CONFLICT DO NOTHING", ['admin', hashAdmin]);
+  await run("INSERT INTO usuarios (usuario, password, rol, nombre) VALUES (?, ?, 'productor', 'Pedro Pas (Productor)') ON CONFLICT DO NOTHING", ['productor', hashProd]);
+  await run("INSERT INTO usuarios (usuario, password, rol, nombre) VALUES (?, ?, 'administrativo', 'Ana Admin (Administrativa)') ON CONFLICT DO NOTHING", ['administrativo', hashAdm]);
 }
 
-module.exports = { pool, run, get, all, initDatabase, withTransaction, updateExpiredPolicies };
+async function healthCheck() {
+  const result = await ensurePool().query(`
+    SELECT current_database() AS database,
+           current_user AS usuario,
+           current_setting('TimeZone') AS timezone,
+           NOW() AS server_time
+  `);
+  return result.rows[0];
+}
+
+async function close() {
+  if (!pool) return;
+  const activePool = pool;
+  pool = null;
+  initialized = false;
+  await activePool.end();
+}
+
+module.exports = {
+  run,
+  get,
+  all,
+  initDatabase,
+  withTransaction,
+  updateExpiredPolicies,
+  healthCheck,
+  close,
+  convertPlaceholders
+};

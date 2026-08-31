@@ -1,6 +1,6 @@
 const jwt = require('jsonwebtoken');
-
-const JWT_SECRET = process.env.JWT_SECRET || 'gpg_seguros_secret_key_12345';
+const { getJwtSecret } = require('../config/security');
+const { setCurrentUser } = require('../database/request-context');
 
 /**
  * Middleware de autenticación y autorización por roles.
@@ -28,8 +28,13 @@ function checkRole(roles) {
     }
 
     try {
-      const decoded = jwt.verify(token, JWT_SECRET);
+      const decoded = jwt.verify(token, getJwtSecret(), {
+        algorithms: ['HS256'],
+        issuer: 'gpg-seguros',
+        audience: 'gpg-seguros-crm'
+      });
       req.user = decoded;
+      setCurrentUser(decoded.id);
 
       if (roles && !roles.includes(decoded.rol)) {
         return res.status(403).json({ error: 'Acceso denegado. Permisos insuficientes.' });

@@ -2,29 +2,30 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
 const db = require('../db');
+const { getJwtSecret, getSessionHours } = require('../config/security');
 
-const DEFAULT_SECRET = 'gpg_seguros_secret_key_12345';
-const JWT_SECRET = process.env.JWT_SECRET || DEFAULT_SECRET;
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const client = new OAuth2Client(GOOGLE_CLIENT_ID);
-
-if (process.env.NODE_ENV === 'production' && (!process.env.JWT_SECRET || process.env.JWT_SECRET === DEFAULT_SECRET)) {
-  console.error('[SECURITY WARNING]: JWT_SECRET no está configurado de forma segura en producción.');
-}
+const SESSION_HOURS = getSessionHours();
 
 // Opciones de la cookie httpOnly (segura, no accesible desde JS)
 const COOKIE_OPTIONS = {
   httpOnly: true,           // No accesible desde JavaScript del cliente → protege contra XSS
   sameSite: 'Lax',          // Protege contra CSRF en la mayoría de casos
   secure: process.env.NODE_ENV === 'production', // Solo HTTPS en producción
-  maxAge: 24 * 60 * 60 * 1000 // 24 horas en ms
+  maxAge: SESSION_HOURS * 60 * 60 * 1000
 };
 
 function issueToken(user) {
   return jwt.sign(
     { id: user.id, usuario: user.usuario, rol: user.rol, nombre: user.nombre },
-    JWT_SECRET,
-    { expiresIn: '24h' }
+    getJwtSecret(),
+    {
+      expiresIn: `${SESSION_HOURS}h`,
+      algorithm: 'HS256',
+      issuer: 'gpg-seguros',
+      audience: 'gpg-seguros-crm'
+    }
   );
 }
 
@@ -36,7 +37,7 @@ async function login(req, res) {
     }
 
     const user = await db.get('SELECT * FROM usuarios WHERE usuario = ?', [usuario]);
-    if (!user) {
+    if (!user || user.activo === false) {
       return res.status(400).json({ error: 'Usuario o contraseña incorrectos.' });
     }
 
@@ -46,6 +47,7 @@ async function login(req, res) {
     }
 
     const token = issueToken(user);
+    await db.run('UPDATE usuarios SET ultimo_acceso = NOW() WHERE id = ?', [user.id]);
 
     // Enviar token en cookie httpOnly (no en el body → protege contra XSS)
     res.cookie('gpg_token', token, COOKIE_OPTIONS);
@@ -85,7 +87,7 @@ async function googleLogin(req, res) {
 
     const user = await db.get('SELECT * FROM usuarios WHERE usuario = ?', [email]);
 
-    if (!user) {
+    if (!user || user.activo === false) {
       console.warn(`[Google Auth Warning]: Intento de inicio de sesión con cuenta de Google no autorizada: ${email}`);
       return res.status(403).json({
         error: 'Acceso no autorizado. Su cuenta de Google (' + email + ') no se encuentra dada de alta en el sistema. Solicite acceso al administrador.'
@@ -93,6 +95,7 @@ async function googleLogin(req, res) {
     }
 
     const token = issueToken(user);
+    await db.run('UPDATE usuarios SET ultimo_acceso = NOW() WHERE id = ?', [user.id]);
 
     res.cookie('gpg_token', token, COOKIE_OPTIONS);
 

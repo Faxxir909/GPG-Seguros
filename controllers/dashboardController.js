@@ -2,26 +2,19 @@ const db = require('../db');
 
 async function getDashboard(req, res, next) {
   try {
-    const hoy = new Date().toISOString().split('T')[0];
-    const fecha30 = new Date(); fecha30.setDate(fecha30.getDate() + 30);
-    const fecha30Str = fecha30.toISOString().split('T')[0];
-    const fecha7 = new Date(); fecha7.setDate(fecha7.getDate() + 7);
-    const fecha7Str = fecha7.toISOString().split('T')[0];
-    const primerDiaMes = new Date(); primerDiaMes.setDate(1);
-    const primerDiaMesStr = primerDiaMes.toISOString().split('T')[0];
-    const periodoActual = new Date().toISOString().substring(0, 7);
-
-    // Generar últimos 6 meses para histórico real de comisiones
-    const periodosCodigos = [];
-    const periodosLabels = [];
+    // PostgreSQL define la fecha de negocio en America/Argentina/Buenos_Aires.
+    const periodos = await db.all(`
+      SELECT TO_CHAR(month_start, 'YYYY-MM') AS periodo
+      FROM GENERATE_SERIES(
+        DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '5 months',
+        DATE_TRUNC('month', CURRENT_DATE),
+        INTERVAL '1 month'
+      ) AS month_start
+      ORDER BY month_start
+    `);
+    const periodosCodigos = periodos.map(row => row.periodo);
     const monthNames = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-    const now = new Date();
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const code = d.toISOString().substring(0, 7);
-      periodosCodigos.push(code);
-      periodosLabels.push(monthNames[d.getMonth()]);
-    }
+    const periodosLabels = periodosCodigos.map(code => monthNames[Number(code.slice(5, 7)) - 1]);
     const primerPeriodo = periodosCodigos[0];
 
     // Ejecutar todas las queries en paralelo
@@ -42,26 +35,27 @@ async function getDashboard(req, res, next) {
     ] = await Promise.all([
       db.get("SELECT COUNT(*) as count FROM clientes WHERE estado = 'activo'"),
       // Contar solo pólizas realmente vigentes y no vencidas por fecha
-      db.get("SELECT COUNT(*) as count FROM polizas WHERE estado = 'vigente' AND fecha_vencimiento >= ?", [hoy]),
+      db.get("SELECT COUNT(*) as count FROM polizas WHERE estado = 'vigente' AND fecha_vencimiento >= CURRENT_DATE"),
       // Vencimientos en los próximos 30 días
-      db.get("SELECT COUNT(*) as count FROM polizas WHERE estado = 'vigente' AND fecha_vencimiento >= ? AND fecha_vencimiento <= ?", [hoy, fecha30Str]),
+      db.get("SELECT COUNT(*) as count FROM polizas WHERE estado = 'vigente' AND fecha_vencimiento BETWEEN CURRENT_DATE AND CURRENT_DATE + 30"),
       db.get("SELECT COUNT(*) as count FROM cotizaciones WHERE estado = 'pendiente' OR estado = 'enviada'"),
       db.get("SELECT COUNT(*) as count FROM siniestros WHERE estado != 'resuelto'"),
-      db.get("SELECT SUM(monto_total) as total FROM polizas WHERE fecha_inicio >= ?", [primerDiaMesStr]),
-      db.get("SELECT SUM(monto_comision) as total FROM comisiones WHERE periodo = ?", [periodoActual]),
+      db.get("SELECT SUM(monto_total) as total FROM polizas WHERE fecha_inicio >= DATE_TRUNC('month', CURRENT_DATE)::date"),
+      db.get("SELECT SUM(monto_comision) as total FROM comisiones WHERE periodo = TO_CHAR(CURRENT_DATE, 'YYYY-MM')"),
       // Listado de vencimientos con límite superior estricto (hoy a hoy+30d)
       db.all(`
         SELECT p.*, c.nombre as cliente_nombre, c.telefono as cliente_telefono
         FROM polizas p
         JOIN clientes c ON p.cliente_id = c.id
-        WHERE p.estado = 'vigente' AND p.fecha_vencimiento >= ? AND p.fecha_vencimiento <= ?
+        WHERE p.estado = 'vigente'
+          AND p.fecha_vencimiento BETWEEN CURRENT_DATE AND CURRENT_DATE + 30
         ORDER BY p.fecha_vencimiento ASC
         LIMIT 10
-      `, [hoy, fecha30Str]),
+      `),
       // Métricas de Cola de Trabajo Operativa
-      db.get("SELECT COUNT(*) as count FROM polizas WHERE estado = 'vencida' OR (estado = 'vigente' AND fecha_vencimiento < ?)", [hoy]),
-      db.get("SELECT COUNT(*) as count FROM polizas WHERE estado = 'vigente' AND fecha_vencimiento >= ? AND fecha_vencimiento <= ?", [hoy, fecha7Str]),
-      db.get("SELECT COUNT(*) as count FROM cuotas_cobranza WHERE estado = 'vencida' OR (estado = 'pendiente' AND fecha_vencimiento < ?)", [hoy]),
+      db.get("SELECT COUNT(*) as count FROM polizas WHERE estado = 'vencida' OR (estado = 'vigente' AND fecha_vencimiento < CURRENT_DATE)"),
+      db.get("SELECT COUNT(*) as count FROM polizas WHERE estado = 'vigente' AND fecha_vencimiento BETWEEN CURRENT_DATE AND CURRENT_DATE + 7"),
+      db.get("SELECT COUNT(*) as count FROM cuotas_cobranza WHERE estado = 'en_mora' OR (estado = 'pendiente' AND fecha_vencimiento < CURRENT_DATE)"),
       db.get("SELECT COUNT(*) as count FROM clientes WHERE id NOT IN (SELECT DISTINCT cliente_id FROM adjuntos WHERE cliente_id IS NOT NULL)"),
       // Histórico real de comisiones
       db.all(`

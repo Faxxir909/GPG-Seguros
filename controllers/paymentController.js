@@ -46,14 +46,7 @@ async function ensurePolicyInstallments(policyId) {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (poliza_id, numero_cuota) DO NOTHING`,
       [policyId, i, totalCuotas, dueDateStr, montoCuota, estado, fechaPago, policy.forma_pago || 'Efectivo / Transferencia']
-    ).catch(async () => {
-      // Fallback SQLite insert or ignore
-      await db.run(
-        `INSERT OR IGNORE INTO cuotas_cobranza (poliza_id, numero_cuota, total_cuotas, fecha_vencimiento, monto, estado, fecha_pago, forma_pago)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [policyId, i, totalCuotas, dueDateStr, montoCuota, estado, fechaPago, policy.forma_pago || 'Efectivo / Transferencia']
-      );
-    });
+    );
   }
 
   return db.all('SELECT * FROM cuotas_cobranza WHERE poliza_id = ? ORDER BY numero_cuota ASC', [policyId]);
@@ -91,15 +84,16 @@ exports.updateInstallment = async (req, res) => {
     if (!cuota) return res.status(404).json({ error: 'Cuota no encontrada' });
 
     const nuevoEstado = estado || cuota.estado;
-    const nuevaFechaPago = nuevoEstado === 'pagada' ? (fecha_pago || new Date().toISOString().split('T')[0]) : null;
+    const nuevaFechaPago = nuevoEstado === 'pagada' ? (fecha_pago || null) : null;
     const nuevaFormaPago = forma_pago || cuota.forma_pago;
     const nuevasNotas = notas !== undefined ? notas : cuota.notas;
 
     await db.run(
-      `UPDATE cuotas_cobranza 
-       SET estado = ?, fecha_pago = ?, forma_pago = ?, notas = ?
+      `UPDATE cuotas_cobranza
+       SET estado = ?, fecha_pago = CASE WHEN ? = 'pagada' THEN COALESCE(?::date, CURRENT_DATE) ELSE NULL END,
+           forma_pago = ?, notas = ?
        WHERE id = ?`,
-      [nuevoEstado, nuevaFechaPago, nuevaFormaPago, nuevasNotas, id]
+      [nuevoEstado, nuevoEstado, nuevaFechaPago, nuevaFormaPago, nuevasNotas, id]
     );
 
     res.json({ message: 'Cuota actualizada exitosamente', cuotaId: id, estado: nuevoEstado });
@@ -112,18 +106,16 @@ exports.updateInstallment = async (req, res) => {
 /** Resumen global de cobranzas */
 exports.getCollectionSummary = async (req, res) => {
   try {
-    const today = new Date().toISOString().split('T')[0];
-
     const stats = await db.get(`
       SELECT 
         COUNT(CASE WHEN estado = 'pagada' THEN 1 END) as cuotas_cobradas,
         COALESCE(SUM(CASE WHEN estado = 'pagada' THEN monto END), 0) as total_cobrado,
-        COUNT(CASE WHEN estado = 'pendiente' AND fecha_vencimiento >= ? THEN 1 END) as cuotas_pendientes,
-        COALESCE(SUM(CASE WHEN estado = 'pendiente' AND fecha_vencimiento >= ? THEN monto END), 0) as total_pendiente,
-        COUNT(CASE WHEN (estado = 'en_mora' OR (estado = 'pendiente' AND fecha_vencimiento < ?)) THEN 1 END) as cuotas_mora,
-        COALESCE(SUM(CASE WHEN (estado = 'en_mora' OR (estado = 'pendiente' AND fecha_vencimiento < ?)) THEN monto END), 0) as total_mora
+        COUNT(CASE WHEN estado = 'pendiente' AND fecha_vencimiento >= CURRENT_DATE THEN 1 END) as cuotas_pendientes,
+        COALESCE(SUM(CASE WHEN estado = 'pendiente' AND fecha_vencimiento >= CURRENT_DATE THEN monto END), 0) as total_pendiente,
+        COUNT(CASE WHEN (estado = 'en_mora' OR (estado = 'pendiente' AND fecha_vencimiento < CURRENT_DATE)) THEN 1 END) as cuotas_mora,
+        COALESCE(SUM(CASE WHEN (estado = 'en_mora' OR (estado = 'pendiente' AND fecha_vencimiento < CURRENT_DATE)) THEN monto END), 0) as total_mora
       FROM cuotas_cobranza
-    `, [today, today, today, today]);
+    `);
 
     res.json(stats || { cuotas_cobradas: 0, total_cobrado: 0, cuotas_pendientes: 0, total_pendiente: 0, cuotas_mora: 0, total_mora: 0 });
   } catch (error) {

@@ -13,24 +13,42 @@ exports.globalSearch = async (req, res) => {
     const searchPattern = `%${q}%`;
     const results = [];
 
-    // 1. Clientes
-    const clients = await db.all(
-      `SELECT id, nombre, dni_cuit, telefono, email, estado 
-       FROM clientes 
-       WHERE nombre ILIKE $1 OR dni_cuit ILIKE $1 OR telefono ILIKE $1 OR email ILIKE $1 
-       LIMIT 6`,
-      [searchPattern]
-    ).catch(async () => {
-      // Fallback SQLite LIKE
-      return db.all(
+    // Ejecutar búsquedas en paralelo para máxima velocidad en Spotlight
+    const [clients, policies, vehicles, claims] = await Promise.all([
+      db.all(
         `SELECT id, nombre, dni_cuit, telefono, email, estado 
          FROM clientes 
-         WHERE nombre LIKE ? OR dni_cuit LIKE ? OR telefono LIKE ? OR email LIKE ? 
+         WHERE nombre ILIKE $1 OR dni_cuit ILIKE $1 OR telefono ILIKE $1 OR email ILIKE $1 
          LIMIT 6`,
-        [searchPattern, searchPattern, searchPattern, searchPattern]
-      );
-    });
+        [searchPattern]
+      ),
+      db.all(
+        `SELECT p.id, p.numero_poliza, p.compania, p.cobertura, p.estado, p.fecha_vencimiento, c.nombre as cliente_nombre, c.id as cliente_id
+         FROM polizas p
+         JOIN clientes c ON p.cliente_id = c.id
+         WHERE p.numero_poliza ILIKE $1 OR p.cobertura ILIKE $1 OR p.compania ILIKE $1
+         LIMIT 6`,
+        [searchPattern]
+      ),
+      db.all(
+        `SELECT v.id, v.patente, v.marca, v.modelo, v.motor, v.chasis, c.nombre as cliente_nombre, c.id as cliente_id
+         FROM vehiculos v
+         JOIN clientes c ON v.cliente_id = c.id
+         WHERE v.patente ILIKE $1 OR v.marca ILIKE $1 OR v.modelo ILIKE $1 OR v.motor ILIKE $1 OR v.chasis ILIKE $1
+         LIMIT 6`,
+        [searchPattern]
+      ),
+      db.all(
+        `SELECT s.id, s.numero_siniestro, s.fecha, s.estado, s.descripcion, c.nombre as cliente_nombre, c.id as cliente_id
+         FROM siniestros s
+         JOIN clientes c ON s.cliente_id = c.id
+         WHERE s.numero_siniestro ILIKE $1 OR s.descripcion ILIKE $1
+         LIMIT 4`,
+        [searchPattern]
+      )
+    ]);
 
+    // 1. Clientes
     (clients || []).forEach(c => {
       results.push({
         category: 'Clientes',
@@ -45,24 +63,6 @@ exports.globalSearch = async (req, res) => {
     });
 
     // 2. Pólizas
-    const policies = await db.all(
-      `SELECT p.id, p.numero_poliza, p.compania, p.cobertura, p.estado, p.fecha_vencimiento, c.nombre as cliente_nombre, c.id as cliente_id
-       FROM polizas p
-       JOIN clientes c ON p.cliente_id = c.id
-       WHERE p.numero_poliza ILIKE $1 OR p.cobertura ILIKE $1 OR p.compania ILIKE $1
-       LIMIT 6`,
-      [searchPattern]
-    ).catch(async () => {
-      return db.all(
-        `SELECT p.id, p.numero_poliza, p.compania, p.cobertura, p.estado, p.fecha_vencimiento, c.nombre as cliente_nombre, c.id as cliente_id
-         FROM polizas p
-         JOIN clientes c ON p.cliente_id = c.id
-         WHERE p.numero_poliza LIKE ? OR p.cobertura LIKE ? OR p.compania LIKE ?
-         LIMIT 6`,
-        [searchPattern, searchPattern, searchPattern]
-      );
-    });
-
     (policies || []).forEach(p => {
       results.push({
         category: 'Pólizas',
@@ -78,24 +78,6 @@ exports.globalSearch = async (req, res) => {
     });
 
     // 3. Vehículos
-    const vehicles = await db.all(
-      `SELECT v.id, v.patente, v.marca, v.modelo, v.motor, v.chasis, c.nombre as cliente_nombre, c.id as cliente_id
-       FROM vehiculos v
-       JOIN clientes c ON v.cliente_id = c.id
-       WHERE v.patente ILIKE $1 OR v.marca ILIKE $1 OR v.modelo ILIKE $1 OR v.motor ILIKE $1 OR v.chasis ILIKE $1
-       LIMIT 6`,
-      [searchPattern]
-    ).catch(async () => {
-      return db.all(
-        `SELECT v.id, v.patente, v.marca, v.modelo, v.motor, v.chasis, c.nombre as cliente_nombre, c.id as cliente_id
-         FROM vehiculos v
-         JOIN clientes c ON v.cliente_id = c.id
-         WHERE v.patente LIKE ? OR v.marca LIKE ? OR v.modelo LIKE ? OR v.motor LIKE ? OR v.chasis LIKE ?
-         LIMIT 6`,
-        [searchPattern, searchPattern, searchPattern, searchPattern, searchPattern]
-      );
-    });
-
     (vehicles || []).forEach(v => {
       results.push({
         category: 'Vehículos',
@@ -111,24 +93,6 @@ exports.globalSearch = async (req, res) => {
     });
 
     // 4. Siniestros
-    const claims = await db.all(
-      `SELECT s.id, s.numero_siniestro, s.fecha, s.estado, s.descripcion, c.nombre as cliente_nombre, c.id as cliente_id
-       FROM siniestros s
-       JOIN clientes c ON s.cliente_id = c.id
-       WHERE s.numero_siniestro ILIKE $1 OR s.descripcion ILIKE $1
-       LIMIT 4`,
-      [searchPattern]
-    ).catch(async () => {
-      return db.all(
-        `SELECT s.id, s.numero_siniestro, s.fecha, s.estado, s.descripcion, c.nombre as cliente_nombre, c.id as cliente_id
-         FROM siniestros s
-         JOIN clientes c ON s.cliente_id = c.id
-         WHERE s.numero_siniestro LIKE ? OR s.descripcion LIKE ?
-         LIMIT 4`,
-        [searchPattern, searchPattern]
-      );
-    });
-
     (claims || []).forEach(s => {
       results.push({
         category: 'Siniestros',

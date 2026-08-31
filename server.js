@@ -1,4 +1,5 @@
 require('dotenv').config();
+const { randomUUID } = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -10,9 +11,22 @@ const fileUpload = require('express-fileupload');
 const morgan = require('morgan');
 const db = require('./db');
 const { checkRole } = require('./middlewares/auth');
+const { requestContextMiddleware } = require('./database/request-context');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+let httpServer = null;
+let databaseInitPromise = null;
+
+function ensureDatabaseReady() {
+  if (!databaseInitPromise) {
+    databaseInitPromise = db.initDatabase().catch(error => {
+      databaseInitPromise = null;
+      throw error;
+    });
+  }
+  return databaseInitPromise;
+}
 
 // Cabeceras de seguridad HTTP con Helmet (permitiendo CDNs externos para estilos/scripts)
 app.use(helmet({
@@ -22,6 +36,13 @@ app.use(helmet({
 
 // Registrar logger HTTP
 app.use(morgan('dev'));
+
+app.use((req, res, next) => {
+  req.id = randomUUID();
+  res.setHeader('X-Request-Id', req.id);
+  next();
+});
+app.use(requestContextMiddleware);
 
 // Habilitar CORS con lista cerrada de orígenes y credenciales
 const allowedOrigins = process.env.ALLOWED_ORIGINS 
@@ -79,10 +100,33 @@ app.use('/uploads', checkRole(['admin', 'productor', 'administrativo']), (req, r
 
 // Rutas de la API
 const apiRouter = require('./routes/api');
-const reportsRouter = require('./routes/reports');
+
+// En procesos serverless la inicialización se realiza de forma perezosa.
+// En servidor tradicional start() espera esta misma promesa antes de escuchar.
+app.use('/api', async (req, res, next) => {
+  try {
+    await ensureDatabaseReady();
+    next();
+  } catch (error) {
+    res.status(503).json({ error: 'Base de datos no disponible. El servicio no está listo.' });
+  }
+});
+
+app.get('/api/health', async (req, res) => {
+  try {
+    const health = await db.healthCheck();
+    res.json({
+      status: 'ok',
+      database: 'postgresql',
+      timezone: health.timezone,
+      serverTime: health.server_time
+    });
+  } catch {
+    res.status(503).json({ status: 'unavailable', database: 'postgresql' });
+  }
+});
 
 app.use('/api', apiRouter);
-app.use('/api/reports', reportsRouter);
 
 // Asegurar que exista la carpeta de cargas (uploads)
 const uploadsDir = path.join(__dirname, 'uploads');
@@ -110,18 +154,40 @@ app.use((err, req, res, next) => {
 
 // Inicializar base de datos y levantar servidor
 async function start() {
-  try {
-    await db.initDatabase();
-  } catch (err) {
-    console.error('[Database Init Warning]:', err.message);
-  }
-  
-  app.listen(PORT, '0.0.0.0', () => {
+  await ensureDatabaseReady();
+  httpServer = app.listen(PORT, '0.0.0.0', () => {
     console.log(`==================================================`);
     console.log(` CRM GPG SEGUROS - Productor Asesor de Seguros (PAS)`);
     console.log(` Servidor corriendo en puerto: ${PORT}`);
     console.log(`==================================================`);
   });
+  return httpServer;
 }
 
-start();
+async function shutdown(signal) {
+  console.log(`[Shutdown]: recibido ${signal}`);
+  if (httpServer) {
+    await new Promise(resolve => httpServer.close(resolve));
+  }
+  await db.close();
+}
+
+if (require.main === module) {
+  start().catch(error => {
+    console.error('[Startup Fatal]:', error.message);
+    process.exitCode = 1;
+  });
+
+  for (const signal of ['SIGINT', 'SIGTERM']) {
+    process.once(signal, () => {
+      shutdown(signal)
+        .then(() => process.exit(0))
+        .catch(error => {
+          console.error('[Shutdown Error]:', error.message);
+          process.exit(1);
+        });
+    });
+  }
+}
+
+module.exports = app;

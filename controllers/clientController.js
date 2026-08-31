@@ -40,7 +40,7 @@ async function getClients(req, res, next) {
     const params = [];
 
     if (search) {
-      sql += ' AND (nombre LIKE ? OR dni_cuit LIKE ? OR email LIKE ? OR telefono LIKE ? OR localidad LIKE ?)';
+      sql += ' AND (nombre ILIKE ? OR dni_cuit ILIKE ? OR email ILIKE ? OR telefono ILIKE ? OR localidad ILIKE ?)';
       const s = `%${search}%`;
       params.push(s, s, s, s, s);
     }
@@ -52,8 +52,8 @@ async function getClients(req, res, next) {
     sql += ' ORDER BY nombre ASC';
     
     if (limit) {
-      const parsedLimit = parseInt(limit);
-      const parsedPage = page ? parseInt(page) : 1;
+      const parsedLimit = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 15));
+      const parsedPage = Math.max(1, Number.parseInt(page, 10) || 1);
       const offset = (parsedPage - 1) * parsedLimit;
 
       const countSql = `SELECT COUNT(*) as count FROM (` + sql + `) as count_q`;
@@ -165,8 +165,13 @@ async function updateClient(req, res, next) {
 // Eliminar cliente
 async function deleteClient(req, res, next) {
   try {
-    await db.run('DELETE FROM clientes WHERE id = ?', [req.params.id]);
-    res.json({ message: 'Cliente eliminado con éxito' });
+    const result = await db.run("UPDATE clientes SET estado = 'inactivo' WHERE id = ? AND estado <> 'inactivo'", [req.params.id]);
+    if (!result.changes) {
+      const error = new Error('Cliente no encontrado o ya inactivo');
+      error.status = 404;
+      return next(error);
+    }
+    res.json({ message: 'Cliente archivado con éxito; se conservó su historial.' });
   } catch (err) {
     next(err);
   }
