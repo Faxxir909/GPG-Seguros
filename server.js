@@ -3,20 +3,25 @@ const { randomUUID } = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
 const cookieParser = require('cookie-parser');
 const path = require('path');
 const fs = require('fs');
 const fileUpload = require('express-fileupload');
-const morgan = require('morgan');
 const db = require('./db');
 const { checkRole } = require('./middlewares/auth');
 const { requestContextMiddleware } = require('./database/request-context');
+const { getAllowedOrigins } = require('./config/security');
+const { csrfProtection } = require('./middlewares/csrf');
+const { authLimiter, writeLimiter, uploadLimiter, generalLimiter } = require('./middlewares/rateLimiters');
+const { logger, requestLoggingMiddleware } = require('./utils/logger');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 let httpServer = null;
 let databaseInitPromise = null;
+
+// Confiar en el primer proxy (Vercel, Cloudflare, Nginx) para resolución segura de IPs en rate limit
+app.set('trust proxy', 1);
 
 function ensureDatabaseReady() {
   if (!databaseInitPromise) {
@@ -28,30 +33,72 @@ function ensureDatabaseReady() {
   return databaseInitPromise;
 }
 
-// Cabeceras de seguridad HTTP con Helmet (permitiendo CDNs externos para estilos/scripts)
+// 1. Cabeceras de seguridad HTTP completas con Helmet y CSP ajustada a la SPA
 app.use(helmet({
-  contentSecurityPolicy: false,
-  crossOriginEmbedderPolicy: false
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: [
+        "'self'",
+        "'unsafe-inline'", // Necesario para los controladores dinámicos de la SPA
+        "https://accounts.google.com",
+        "https://cdn.jsdelivr.net",
+        "https://cdnjs.cloudflare.com"
+      ],
+      scriptSrcAttr: ["'unsafe-inline'"],
+      styleSrc: [
+        "'self'",
+        "'unsafe-inline'",
+        "https://cdn.jsdelivr.net",
+        "https://cdnjs.cloudflare.com",
+        "https://fonts.googleapis.com"
+      ],
+      styleSrcAttr: ["'unsafe-inline'"],
+      fontSrc: [
+        "'self'",
+        "https://cdnjs.cloudflare.com",
+        "https://fonts.gstatic.com",
+        "data:"
+      ],
+      imgSrc: ["'self'", "data:", "https:", "blob:"],
+      connectSrc: ["'self'", "https://accounts.google.com"],
+      frameSrc: ["https://accounts.google.com"],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"],
+      upgradeInsecureRequests: process.env.NODE_ENV === 'production' ? [] : null
+    }
+  },
+  crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
+  crossOriginEmbedderPolicy: false,
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  xContentTypeOptions: true,
+  hsts: process.env.NODE_ENV === 'production' ? { maxAge: 31536000, includeSubDomains: true, preload: true } : false
 }));
 
-// Registrar logger HTTP
-app.use(morgan('dev'));
-
+// 2. Trazabilidad con Request ID
 app.use((req, res, next) => {
   req.id = randomUUID();
   res.setHeader('X-Request-Id', req.id);
   next();
 });
 app.use(requestContextMiddleware);
+app.use(requestLoggingMiddleware);
 
-// Habilitar CORS con lista cerrada de orígenes y credenciales
-const allowedOrigins = process.env.ALLOWED_ORIGINS 
-  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()) 
-  : ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:5173'];
+// 3. Habilitar CORS con lista cerrada de orígenes y credenciales
+let allowedOrigins = [];
+try {
+  allowedOrigins = getAllowedOrigins();
+} catch (e) {
+  if (process.env.NODE_ENV === 'production') {
+    console.error('[CORS Init Error]:', e.message);
+  }
+}
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+    // Peticiones sin origen (ej: same-origin, curl, server-side) o dentro de la allowlist
+    if (!origin || allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
     callback(new Error('Acceso bloqueado por política CORS'));
@@ -59,36 +106,73 @@ app.use(cors({
   credentials: true
 }));
 
-// Limitador de intentos de login para proteger contra ataques de fuerza bruta
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutos
-  max: 20, // Máximo 20 intentos por IP en 15 min
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Demasiados intentos de autenticación. Por favor intente nuevamente en 15 minutos.' }
-});
-
+// 4. Rate limiters segmentados por criticidad
+app.use(generalLimiter);
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/google', authLimiter);
+app.use('/api/upload', uploadLimiter);
+app.use(['/api/clients/import', '/api/policies/import'], uploadLimiter);
 
-// Cookie parser (para leer httpOnly cookies del JWT)
+// 5. Rate limiter de escrituras para /api (POST, PUT, DELETE, PATCH)
+app.use('/api', (req, res, next) => {
+  if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) {
+    return writeLimiter(req, res, next);
+  }
+  next();
+});
+
+// 6. Cookie parser para leer tokens httpOnly
 app.use(cookieParser());
 
-// Middleware para procesar JSON y datos de formularios
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// 7. Protección contra CSRF en peticiones mutables
+app.use('/api', csrfProtection);
 
-// Configurar subida de archivos
+// 8. Body parsers
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// 9. Configurar subida de archivos (límite 10MB)
 app.use(fileUpload({
   createParentPath: true,
-  limits: { fileSize: 10 * 1024 * 1024 }, // Límite de 10MB
-  useTempFiles: false
+  limits: { fileSize: 10 * 1024 * 1024 },
+  useTempFiles: false,
+  abortOnLimit: true
 }));
 
-// Servir archivos estáticos del frontend
+// 10. Protección de acceso a la interfaz principal (requiere sesión activa)
+app.get(['/dashboard.html', '/dashboard'], (req, res) => {
+  let token = req.cookies?.gpg_token;
+  if (!token) {
+    const authHeader = req.headers['authorization'];
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.split(' ')[1];
+    }
+  }
+
+  if (!token) {
+    return res.redirect('/index.html');
+  }
+
+  try {
+    const jwt = require('jsonwebtoken');
+    const { getJwtSecret, getClearCookieOptions } = require('./config/security');
+    jwt.verify(token, getJwtSecret(), {
+      algorithms: ['HS256'],
+      issuer: 'gpg-seguros',
+      audience: 'gpg-seguros-crm'
+    });
+    return res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+  } catch {
+    const { getClearCookieOptions } = require('./config/security');
+    res.clearCookie('gpg_token', getClearCookieOptions());
+    return res.redirect('/index.html');
+  }
+});
+
+// 11. Servir archivos estáticos del frontend
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Servir archivos cargados de documentación digital mediante RUTA PROTEGIDA (requiere autenticación)
+// 11. Servir archivos cargados de documentación digital mediante RUTA PROTEGIDA (requiere autenticación)
 app.use('/uploads', checkRole(['admin', 'productor', 'administrativo']), (req, res) => {
   const safeFilename = path.basename(req.path);
   const filePath = path.join(__dirname, 'uploads', safeFilename);
@@ -98,11 +182,9 @@ app.use('/uploads', checkRole(['admin', 'productor', 'administrativo']), (req, r
   res.sendFile(filePath);
 });
 
-// Rutas de la API
+// 12. Enrutador API y verificación de disponibilidad de DB
 const apiRouter = require('./routes/api');
 
-// En procesos serverless la inicialización se realiza de forma perezosa.
-// En servidor tradicional start() espera esta misma promesa antes de escuchar.
 app.use('/api', async (req, res, next) => {
   try {
     await ensureDatabaseReady();
@@ -128,15 +210,14 @@ app.get('/api/health', async (req, res) => {
 
 app.use('/api', apiRouter);
 
-// Asegurar que exista la carpeta de cargas (uploads)
+// Asegurar que exista la carpeta local de uploads
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir);
+  fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
-// Middleware de fallback para servir la SPA o error 404
-app.use((req, res, next) => {
-  // Si solicitan algo que no es API, devolver el index.html principal
+// 13. Fallback para SPA o 404
+app.use((req, res) => {
   if (!req.path.startsWith('/api')) {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
   } else {
@@ -144,15 +225,25 @@ app.use((req, res, next) => {
   }
 });
 
-// Middleware global de manejo de errores (debe ir ÚLTIMO)
+// 14. Middleware global de manejo y sanitización de errores (ÚLTIMO)
 app.use((err, req, res, next) => {
-  console.error('[Global Error Handler]:', err.stack || err.message || err);
-  const status = err.status || 500;
-  const message = err.message || 'Error interno del servidor';
-  res.status(status).json({ error: message });
+  const status = Number.isInteger(err.status) && err.status >= 400 && err.status < 600 ? err.status : 500;
+
+  logger.error(`[Error]: ${err.message}`, err);
+
+  if (status >= 500) {
+    return res.status(500).json({
+      error: 'Error interno del servidor. Por favor intente nuevamente más tarde.',
+      requestId: req.id
+    });
+  }
+
+  res.status(status).json({
+    error: err.message,
+    requestId: req.id
+  });
 });
 
-// Inicializar base de datos y levantar servidor
 async function start() {
   await ensureDatabaseReady();
   httpServer = app.listen(PORT, '0.0.0.0', () => {

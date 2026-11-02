@@ -1,9 +1,10 @@
+require('dotenv').config();
 const test = require('node:test');
 const assert = require('node:assert');
 
 process.env.NODE_ENV = 'test';
 
-const hasTestDatabase = Boolean(process.env.TEST_DATABASE_URL);
+const hasTestDatabase = Boolean(process.env.TEST_DATABASE_URL || process.env.DATABASE_URL);
 
 test('integración PostgreSQL aislada', { skip: !hasTestDatabase }, async t => {
   const db = require('../db');
@@ -55,13 +56,24 @@ test('integración PostgreSQL aislada', { skip: !hasTestDatabase }, async t => {
     const dni = `97${Date.now()}`;
     const client = await db.run('INSERT INTO clientes (nombre, dni_cuit) VALUES (?, ?)', ['Audit Test', dni]);
     const event = await db.get(`
-      SELECT accion, datos_nuevos
+      SELECT id, accion, datos_nuevos
       FROM auditoria_eventos
       WHERE tabla = 'clientes' AND registro_id = ?
       ORDER BY creado_en DESC LIMIT 1
     `, [String(client.id)]);
     assert.strictEqual(event.accion, 'INSERT');
     assert.strictEqual(event.datos_nuevos.nombre, 'Audit Test');
+
+    // Comprobar prohibición estricta de UPDATE y DELETE sobre auditoria_eventos
+    await assert.rejects(
+      db.run('UPDATE auditoria_eventos SET accion = ? WHERE id = ?', ['UPDATE', event.id]),
+      /append-only|modificaciones/i
+    );
+    await assert.rejects(
+      db.run('DELETE FROM auditoria_eventos WHERE id = ?', [event.id]),
+      /append-only|eliminaciones/i
+    );
+
     await db.run('DELETE FROM clientes WHERE id = ?', [client.id]);
   });
 });

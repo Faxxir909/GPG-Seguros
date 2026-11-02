@@ -586,8 +586,8 @@ document.addEventListener('DOMContentLoaded', () => {
       marca: document.getElementById('vehiculo-marca').value,
       modelo: document.getElementById('vehiculo-modelo').value,
       version: document.getElementById('vehiculo-version').value,
-      anio: parseInt(document.getElementById('vehiculo-anio').value),
-      patente: document.getElementById('vehiculo-patente').value,
+      anio: parseInt(document.getElementById('vehiculo-anio').value, 10),
+      patente: document.getElementById('vehiculo-patente').value.trim().toUpperCase().replace(/[^A-Z0-9]/g, ''),
       chasis: document.getElementById('vehiculo-chasis').value,
       motor: document.getElementById('vehiculo-motor').value,
       uso: document.getElementById('vehiculo-uso').value
@@ -634,7 +634,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Autocompletar patente
+  // Autocompletar patente al salir del campo
   document.addEventListener('blur', async (e) => {
     if (e.target?.id === 'vehiculo-patente') {
       const clean = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -643,6 +643,84 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
   }, true);
+
+  // Buscar datos por patente
+  document.getElementById('btn-buscar-patente')?.addEventListener('click', async () => {
+    const inputPatente = document.getElementById('vehiculo-patente');
+    if (!inputPatente) return;
+    const rawVal = inputPatente.value.trim();
+    if (!rawVal) {
+      showToast('Por favor ingrese una patente para buscar.', 'warning');
+      inputPatente.focus();
+      return;
+    }
+
+    const btn = document.getElementById('btn-buscar-patente');
+    const originalHtml = btn ? btn.innerHTML : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1" role="status"></span> Buscando...`;
+    }
+
+    try {
+      const data = await apiFetch(`/api/vehicles/lookup?patente=${encodeURIComponent(rawVal)}`);
+      inputPatente.value = data.patente || rawVal.toUpperCase();
+
+      if (data.datos_registrales) {
+        const d = data.datos_registrales;
+        const marcaSelect = document.getElementById('vehiculo-marca');
+        const modeloSelect = document.getElementById('vehiculo-modelo');
+        const versionSelect = document.getElementById('vehiculo-version');
+
+        if (marcaSelect && d.marca) {
+          marcaSelect.value = d.marca;
+          try {
+            const models = await apiFetch(`/api/brands/${encodeURIComponent(d.marca)}/models`);
+            modeloSelect.innerHTML = '<option value="">Seleccione Modelo</option>';
+            models.forEach(m => { modeloSelect.innerHTML += `<option value="${m}">${m}</option>`; });
+            modeloSelect.disabled = false;
+            if (d.modelo) {
+              modeloSelect.value = d.modelo;
+              const versions = await apiFetch(`/api/brands/${encodeURIComponent(d.marca)}/models/${encodeURIComponent(d.modelo)}/versions`);
+              versionSelect.innerHTML = '<option value="">Seleccione Versión</option>';
+              versions.forEach(v => { versionSelect.innerHTML += `<option value="${v}">${v}</option>`; });
+              versionSelect.disabled = false;
+              if (d.version) versionSelect.value = d.version;
+            }
+          } catch (loadErr) {
+            console.warn('Error al cargar catálogo en cascada:', loadErr);
+          }
+        }
+
+        if (document.getElementById('vehiculo-anio') && d.anio) {
+          document.getElementById('vehiculo-anio').value = d.anio;
+        }
+        if (document.getElementById('vehiculo-chasis') && d.chasis) {
+          document.getElementById('vehiculo-chasis').value = d.chasis;
+        }
+        if (document.getElementById('vehiculo-motor') && d.motor) {
+          document.getElementById('vehiculo-motor').value = d.motor;
+        }
+        if (document.getElementById('vehiculo-uso') && d.uso) {
+          document.getElementById('vehiculo-uso').value = d.uso;
+        }
+
+        const msg = data.cliente_asociado?.nombre
+          ? `Vehículo encontrado (asociado a ${data.cliente_asociado.nombre}). Datos autocompletados.`
+          : 'Vehículo encontrado en el registro local. Datos autocompletados.';
+        showToast(msg, 'success');
+      } else {
+        showToast(data.mensaje || 'Patente validada. Complete marca, modelo y año manualmente.', 'info');
+      }
+    } catch (err) {
+      showToast(err.message || 'Error al consultar la patente.', 'danger');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+      }
+    }
+  });
 
   // Agregar póliza
   document.getElementById('btn-add-policy')?.addEventListener('click', async () => {
@@ -738,7 +816,12 @@ document.addEventListener('DOMContentLoaded', () => {
     formData.append('cliente_id', activeClientId);
     formData.append('tipo_documento', document.getElementById('doc-type').value);
     try {
-      const response = await fetch('/api/upload', { method: 'POST', credentials: 'include', body: formData });
+      const response = await fetch('/api/upload', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        body: formData
+      });
       if (!response.ok) { const err = await response.json(); throw new Error(err.error || 'Error al subir archivo'); }
       fileInput.value = '';
       loadClientDocs();
@@ -763,7 +846,12 @@ document.addEventListener('DOMContentLoaded', () => {
     btnSubmit.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span> Importando...`;
     const formData = new FormData(); formData.append('archivo', fileInput.files[0]);
     try {
-      const response = await fetch('/api/clients/import', { method: 'POST', credentials: 'include', body: formData });
+      const response = await fetch('/api/clients/import', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        body: formData
+      });
       const data = await response.json();
       resultDiv.classList.remove('d-none','alert-danger','alert-success');
       if (response.ok) {

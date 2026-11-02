@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-const { getJwtSecret } = require('../config/security');
+const { getJwtSecret, getClearCookieOptions } = require('../config/security');
 const { setCurrentUser } = require('../database/request-context');
 
 /**
@@ -41,8 +41,8 @@ function checkRole(roles) {
       }
       next();
     } catch (err) {
-      // Cookie expirada o inválida: borrarla y devolver 401
-      res.clearCookie('gpg_token');
+      // Cookie expirada o inválida: borrarla con atributos coincidentes y devolver 401
+      res.clearCookie('gpg_token', getClearCookieOptions());
       return res.status(401).json({ error: 'Sesión expirada. Por favor inicie sesión nuevamente.' });
     }
   };

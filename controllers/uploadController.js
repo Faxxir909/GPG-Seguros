@@ -1,54 +1,81 @@
-const path = require('path');
-const fs = require('fs');
 const db = require('../db');
+const { storageService } = require('../services/storage');
 
-const ALLOWED_EXTENSIONS = ['.pdf', '.png', '.jpg', '.jpeg', '.doc', '.docx', '.xls', '.xlsx'];
+const ALLOWED_DOC_TYPES = ['dni', 'cedula', 'licencia', 'afip', 'pdf', 'foto', 'denuncia', 'formulario', 'otro'];
 
-async function uploadFile(req, res) {
-  if (!req.files || Object.keys(req.files).length === 0) {
+async function uploadFile(req, res, next) {
+  if (!req.files || Object.keys(req.files).length === 0 || !req.files.archivo) {
     return res.status(400).json({ error: 'No se subió ningún archivo.' });
   }
 
   const { cliente_id, poliza_id, siniestro_id, tipo_documento } = req.body;
   const archivo = req.files.archivo;
 
-  // Validar extensión de archivo para evitar malware/scripts
-  const ext = path.extname(archivo.name).toLowerCase();
-  if (!ALLOWED_EXTENSIONS.includes(ext)) {
-    return res.status(400).json({ error: 'Tipo de archivo no permitido. Solo se aceptan PDFs, imágenes y documentos de oficina.' });
+  const tipoDoc = (tipo_documento || 'otro').toLowerCase().trim();
+  if (!ALLOWED_DOC_TYPES.includes(tipoDoc)) {
+    return res.status(400).json({
+      error: `Tipo de documento inválido. Opciones permitidas: ${ALLOWED_DOC_TYPES.join(', ')}.`
+    });
   }
 
-  const uploadsDir = path.join(__dirname, '..', 'uploads');
-  if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir);
+  const cId = cliente_id ? parseInt(cliente_id, 10) : null;
+  const pId = poliza_id ? parseInt(poliza_id, 10) : null;
+  const sId = siniestro_id ? parseInt(siniestro_id, 10) : null;
+
+  // Validación: Debe tener exactamente una entidad asociada
+  const nonNullParents = [cId, pId, sId].filter(id => id !== null && !isNaN(id) && id > 0);
+  if (nonNullParents.length !== 1) {
+    return res.status(400).json({
+      error: 'El archivo adjunto debe estar asociado exactamente a un cliente, una póliza o un siniestro.'
+    });
   }
 
-  // Generar nombre de archivo único
-  const baseName = path.basename(archivo.name, ext).replace(/[^a-zA-Z0-9]/g, '_');
-  const uniqueName = `${tipo_documento}_${Date.now()}_${baseName}${ext}`;
-  const uploadPath = path.join(uploadsDir, uniqueName);
+  let savedStorage = null;
 
-  archivo.mv(uploadPath, async (err) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    // 1. Guardar archivo con verificación de contenido real (magic numbers) y UUID seguro
+    savedStorage = await storageService.saveFile({
+      buffer: archivo.data,
+      originalName: archivo.name,
+      prefix: tipoDoc
+    });
 
-    try {
-      const result = await db.run(`
+    // 2. Registrar en la base de datos dentro de transacción con contexto de usuario
+    const result = await db.withTransaction(async trx => {
+      return await trx.run(`
         INSERT INTO adjuntos (cliente_id, poliza_id, siniestro_id, nombre_archivo, ruta_archivo, tipo_documento)
         VALUES (?, ?, ?, ?, ?, ?)
       `, [
-        cliente_id ? parseInt(cliente_id) : null,
-        poliza_id ? parseInt(poliza_id) : null,
-        siniestro_id ? parseInt(siniestro_id) : null,
-        archivo.name,
-        `/uploads/${uniqueName}`,
-        tipo_documento
+        cId,
+        pId,
+        sId,
+        savedStorage.safeName,
+        savedStorage.publicPath,
+        tipoDoc
       ]);
+    }, { userId: req.user?.id, requestId: req.id });
 
-      res.status(201).json({ id: result.id, name: archivo.name, path: `/uploads/${uniqueName}` });
-    } catch (dbErr) {
-      res.status(500).json({ error: dbErr.message });
+    return res.status(201).json({
+      id: result.id,
+      name: savedStorage.safeName,
+      path: savedStorage.publicPath,
+      tipo_documento: tipoDoc
+    });
+  } catch (err) {
+    // 3. Rollback de almacenamiento: Si la base de datos falla o hay error de guardado,
+    // eliminar inmediatamente el archivo para no dejar huérfanos.
+    if (savedStorage?.storageKey) {
+      await storageService.deleteFile(savedStorage.storageKey);
     }
-  });
+
+    if (err.status && err.status < 500) {
+      return res.status(err.status).json({ error: err.message });
+    }
+
+    // No exponer rutas físicas ni errores SQL al cliente
+    console.error('[Upload Error]:', err.message);
+    return res.status(500).json({ error: 'Error interno al procesar el archivo adjunto.' });
+  }
 }
 
 module.exports = {

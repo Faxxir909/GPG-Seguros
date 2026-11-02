@@ -106,6 +106,7 @@ function paginate({ items, page, pageSize, tbodyId, renderFn, wrapId, infoId, na
 /** API Fetch autenticado — usa cookie httpOnly automáticamente (no necesita token manual) */
 async function apiFetch(url, options = {}) {
   if (!options.headers) options.headers = {};
+  options.headers['X-Requested-With'] = 'XMLHttpRequest';
 
   // Las cookies httpOnly se envían automáticamente por el browser con credentials: 'include'
   options.credentials = 'include';

@@ -1,36 +1,6 @@
 const db = require('../db');
-
-// Validar DNI (7-8 dígitos) o CUIT/CUIL (11 dígitos con dígito verificador de AFIP)
-function validateDniOrCuit(val) {
-  if (val === null || val === undefined || val === '') return false;
-  const clean = String(val).replace(/[^0-9]/g, '');
-  
-  if (clean.length === 7 || clean.length === 8) {
-    return true;
-  }
-  
-  if (clean.length === 11) {
-    const multipliers = [5, 4, 3, 2, 7, 6, 5, 4, 3, 2];
-    let sum = 0;
-    for (let i = 0; i < 10; i++) {
-      sum += parseInt(clean[i]) * multipliers[i];
-    }
-    const mod = sum % 11;
-    let checkDigit = 11 - mod;
-    if (checkDigit === 11) checkDigit = 0;
-    if (checkDigit === 10) checkDigit = 9;
-    return checkDigit === parseInt(clean[10]);
-  }
-  
-  return false;
-}
-
-// Validar formato de correo electrónico
-function validateEmail(email) {
-  if (!email) return true; // Campo opcional
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return emailRegex.test(email);
-}
+const { findRowValue, parseExcelBuffer } = require('../services/importerService');
+const { isValidDniCuit, isValidEmail } = require('../utils/validation');
 
 // Listar clientes con paginación y búsqueda opcional en servidor
 async function getClients(req, res, next) {
@@ -105,13 +75,13 @@ async function createClient(req, res, next) {
     return next(error);
   }
 
-  if (!validateDniOrCuit(dni_cuit)) {
+  if (!isValidDniCuit(dni_cuit)) {
     const error = new Error('El formato o dígito verificador del DNI/CUIT no es válido.');
     error.status = 400;
     return next(error);
   }
 
-  if (!validateEmail(email)) {
+  if (email && !isValidEmail(email)) {
     const error = new Error('El formato de correo electrónico no es válido.');
     error.status = 400;
     return next(error);
@@ -138,13 +108,13 @@ async function updateClient(req, res, next) {
     return next(error);
   }
 
-  if (!validateDniOrCuit(dni_cuit)) {
+  if (!isValidDniCuit(dni_cuit)) {
     const error = new Error('El formato o dígito verificador del DNI/CUIT no es válido.');
     error.status = 400;
     return next(error);
   }
 
-  if (!validateEmail(email)) {
+  if (email && !isValidEmail(email)) {
     const error = new Error('El formato de correo electrónico no es válido.');
     error.status = 400;
     return next(error);
@@ -178,18 +148,6 @@ async function deleteClient(req, res, next) {
 }
 
 // Importar clientes desde Excel
-function findRowValue(row, patterns) {
-  const keys = Object.keys(row);
-  for (const pattern of patterns) {
-    const key = keys.find(k => pattern.test(k.trim()));
-    if (key && row[key] !== undefined && row[key] !== null && String(row[key]).trim() !== '') {
-      return row[key];
-    }
-  }
-  return undefined;
-}
-
-// Importar clientes desde Excel
 async function importClients(req, res, next) {
   if (!req.files || Object.keys(req.files).length === 0) {
     const error = new Error('No se subió ningún archivo Excel.');
@@ -204,40 +162,8 @@ async function importClients(req, res, next) {
     return next(error);
   }
 
-  const XLSX = require('xlsx');
-
   try {
-    const workbook = XLSX.read(archivo.data, { type: 'buffer' });
-    if (!workbook || !workbook.SheetNames || !workbook.SheetNames.length) {
-      const error = new Error('El archivo Excel no tiene hojas válidas.');
-      error.status = 400;
-      return next(error);
-    }
-
-    const sheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[sheetName];
-    let jsonData = XLSX.utils.sheet_to_json(worksheet);
-
-    if (jsonData.length === 0 || !jsonData.some(row => findRowValue(row, [/nombre/i, /tomador/i, /asegurado/i, /cliente/i]))) {
-      const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-      const headerIndex = rawRows.findIndex(r => Array.isArray(r) && r.length >= 2 && r.some(cell => typeof cell === 'string' && /^(Nombre|Cliente|Tomador|Asegurado|DNI|CUIT|Documento)$/i.test(cell.trim())));
-      if (headerIndex !== -1) {
-        const headers = rawRows[headerIndex];
-        jsonData = rawRows.slice(headerIndex + 1).filter(r => r && r.length > 1).map(r => {
-          const obj = {};
-          headers.forEach((h, i) => {
-            if (h && r[i] !== undefined) obj[h] = r[i];
-          });
-          return obj;
-        });
-      }
-    }
-
-    if (!jsonData || !jsonData.length) {
-      const error = new Error('El archivo Excel está vacío.');
-      error.status = 400;
-      return next(error);
-    }
+    const jsonData = parseExcelBuffer(archivo.data);
 
     let insertados = 0;
     let actualizados = 0;

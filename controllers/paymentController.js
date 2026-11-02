@@ -4,13 +4,13 @@
 const db = require('../db');
 
 /** Helper para generar cuotas automáticamente si la póliza no tiene */
-async function ensurePolicyInstallments(policyId) {
-  const existing = await db.all('SELECT * FROM cuotas_cobranza WHERE poliza_id = ? ORDER BY numero_cuota ASC', [policyId]);
+async function ensurePolicyInstallments(policyId, dbExecutor = db) {
+  const existing = await dbExecutor.all('SELECT * FROM cuotas_cobranza WHERE poliza_id = ? ORDER BY numero_cuota ASC', [policyId]);
   if (existing && existing.length > 0) {
     return existing;
   }
 
-  const policy = await db.get('SELECT * FROM polizas WHERE id = ?', [policyId]);
+  const policy = await dbExecutor.get('SELECT * FROM polizas WHERE id = ?', [policyId]);
   if (!policy) return [];
 
   const totalCuotas = (policy.valor_cuota && parseFloat(policy.valor_cuota) > 0 && policy.monto_total)
@@ -21,27 +21,32 @@ async function ensurePolicyInstallments(policyId) {
     ? parseFloat(policy.valor_cuota)
     : (parseFloat(policy.monto_total || 0) / totalCuotas);
 
-  const startDate = new Date(policy.fecha_inicio || new Date());
+  const dateStr = String(policy.fecha_inicio || '').split('T')[0];
+  const parts = dateStr.split('-');
+  const startYear = parts.length === 3 ? parseInt(parts[0], 10) : new Date().getFullYear();
+  const startMonth = parts.length === 3 ? parseInt(parts[1], 10) - 1 : new Date().getMonth();
+  const startDay = parts.length === 3 ? parseInt(parts[2], 10) : new Date().getDate();
+
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const createdCuotas = [];
-
   for (let i = 1; i <= totalCuotas; i++) {
-    const dueDate = new Date(startDate);
-    dueDate.setMonth(startDate.getMonth() + (i - 1));
+    // Cálculo seguro de fecha evitando el month-rollover bug de JavaScript
+    const targetMonth = startMonth + (i - 1);
+    const tempDate = new Date(startYear, targetMonth, 1);
+    const maxDaysInMonth = new Date(tempDate.getFullYear(), tempDate.getMonth() + 1, 0).getDate();
+    const effectiveDay = Math.min(startDay, maxDaysInMonth);
+    const dueDate = new Date(tempDate.getFullYear(), tempDate.getMonth(), effectiveDay);
     const dueDateStr = dueDate.toISOString().split('T')[0];
 
     // Determinar estado inicial
     let estado = 'pendiente';
     let fechaPago = null;
     if (dueDate.getTime() < today.getTime()) {
-      // Si la fecha ya pasó, marcar como pagada las primeras cuotas o pendiente
-      // Por defecto, si es anterior a hoy, podemos considerarla pagada si la póliza está activa o pendiente
       estado = 'pendiente';
     }
 
-    await db.run(
+    await dbExecutor.run(
       `INSERT INTO cuotas_cobranza (poliza_id, numero_cuota, total_cuotas, fecha_vencimiento, monto, estado, fecha_pago, forma_pago)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (poliza_id, numero_cuota) DO NOTHING`,
@@ -49,11 +54,11 @@ async function ensurePolicyInstallments(policyId) {
     );
   }
 
-  return db.all('SELECT * FROM cuotas_cobranza WHERE poliza_id = ? ORDER BY numero_cuota ASC', [policyId]);
+  return dbExecutor.all('SELECT * FROM cuotas_cobranza WHERE poliza_id = ? ORDER BY numero_cuota ASC', [policyId]);
 }
 
 /** Obtener el plan de cuotas de una póliza */
-exports.getPolicyInstallments = async (req, res) => {
+async function getPolicyInstallments(req, res) {
   try {
     const policyId = parseInt(req.params.id);
     if (!policyId) return res.status(400).json({ error: 'ID de póliza inválido' });
@@ -72,39 +77,61 @@ exports.getPolicyInstallments = async (req, res) => {
     console.error('Error al obtener cuotas de póliza:', error);
     res.status(500).json({ error: 'Error al obtener cuotas de la póliza' });
   }
-};
+}
 
 /** Marcar o actualizar el estado de una cuota */
-exports.updateInstallment = async (req, res) => {
+async function updateInstallment(req, res, next) {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id, 10);
+    if (!id || id <= 0) {
+      return res.status(400).json({ error: 'ID de cuota inválido. Debe ser un entero positivo.' });
+    }
+
     const { estado, fecha_pago, forma_pago, notas } = req.body;
 
-    const cuota = await db.get('SELECT * FROM cuotas_cobranza WHERE id = ?', [id]);
-    if (!cuota) return res.status(404).json({ error: 'Cuota no encontrada' });
+    const estadosValidos = ['pendiente', 'pagada', 'en_mora', 'vencida', 'anulada'];
+    if (estado && !estadosValidos.includes(estado.toLowerCase().trim())) {
+      return res.status(400).json({
+        error: `Estado inválido. Opciones permitidas: ${estadosValidos.join(', ')}.`
+      });
+    }
 
-    const nuevoEstado = estado || cuota.estado;
-    const nuevaFechaPago = nuevoEstado === 'pagada' ? (fecha_pago || null) : null;
-    const nuevaFormaPago = forma_pago || cuota.forma_pago;
-    const nuevasNotas = notas !== undefined ? notas : cuota.notas;
+    const result = await db.withTransaction(async trx => {
+      const cuota = await trx.get('SELECT * FROM cuotas_cobranza WHERE id = ? FOR UPDATE', [id]);
+      if (!cuota) {
+        const err = new Error('Cuota no encontrada');
+        err.status = 404;
+        throw err;
+      }
 
-    await db.run(
-      `UPDATE cuotas_cobranza
-       SET estado = ?, fecha_pago = CASE WHEN ? = 'pagada' THEN COALESCE(?::date, CURRENT_DATE) ELSE NULL END,
-           forma_pago = ?, notas = ?
-       WHERE id = ?`,
-      [nuevoEstado, nuevoEstado, nuevaFechaPago, nuevaFormaPago, nuevasNotas, id]
-    );
+      const nuevoEstado = estado ? estado.toLowerCase().trim() : cuota.estado;
+      const nuevaFechaPago = nuevoEstado === 'pagada' ? (fecha_pago || null) : null;
+      const nuevaFormaPago = forma_pago ? String(forma_pago).trim() : cuota.forma_pago;
+      const nuevasNotas = notas !== undefined ? (notas ? String(notas).trim() : null) : cuota.notas;
 
-    res.json({ message: 'Cuota actualizada exitosamente', cuotaId: id, estado: nuevoEstado });
+      await trx.run(
+        `UPDATE cuotas_cobranza
+         SET estado = ?, fecha_pago = CASE WHEN ? = 'pagada' THEN COALESCE(?::date, CURRENT_DATE) ELSE NULL END,
+             forma_pago = ?, notas = ?
+         WHERE id = ?`,
+        [nuevoEstado, nuevoEstado, nuevaFechaPago, nuevaFormaPago, nuevasNotas, id]
+      );
+
+      return { cuotaId: id, estado: nuevoEstado };
+    }, { userId: req.user?.id, requestId: req.id });
+
+    res.json({ message: 'Cuota actualizada exitosamente', ...result });
   } catch (error) {
-    console.error('Error al actualizar cuota:', error);
-    res.status(500).json({ error: 'Error al actualizar la cuota' });
+    if (error.status) {
+      return res.status(error.status).json({ error: error.message });
+    }
+    console.error('Error al actualizar cuota:', error.message);
+    res.status(500).json({ error: 'Error interno al actualizar la cuota.' });
   }
-};
+}
 
 /** Resumen global de cobranzas */
-exports.getCollectionSummary = async (req, res) => {
+async function getCollectionSummary(req, res) {
   try {
     const stats = await db.get(`
       SELECT 
@@ -122,4 +149,12 @@ exports.getCollectionSummary = async (req, res) => {
     console.error('Error en resumen de cobranzas:', error);
     res.status(500).json({ error: 'Error al obtener resumen de cobranzas' });
   }
+}
+
+module.exports = {
+  ensurePolicyInstallments,
+  getPolicyInstallments,
+  updateInstallment,
+  getCollectionSummary
 };
+

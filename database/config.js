@@ -8,16 +8,16 @@ function readBoolean(value, defaultValue = false) {
 }
 
 function resolveConnectionString() {
-  if (process.env.NODE_ENV === 'test') {
-    return process.env.TEST_DATABASE_URL || null;
-  }
+  const raw = process.env.NODE_ENV === 'test'
+    ? (process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || null)
+    : (process.env.DATABASE_URL
+      || process.env.INTERNAL_DATABASE_URL
+      || process.env.EXTERNAL_DATABASE_URL
+      || process.env.POSTGRES_URL
+      || process.env.POSTGRESQL_URL
+      || null);
 
-  return process.env.DATABASE_URL
-    || process.env.INTERNAL_DATABASE_URL
-    || process.env.EXTERNAL_DATABASE_URL
-    || process.env.POSTGRES_URL
-    || process.env.POSTGRESQL_URL
-    || null;
+  return typeof raw === 'string' ? raw.trim() : null;
 }
 
 function buildPoolConfig() {
@@ -25,7 +25,7 @@ function buildPoolConfig() {
   const host = process.env.PGHOST || process.env.PG_HOST || null;
 
   if (process.env.NODE_ENV === 'test' && !connectionString) {
-    throw new Error('TEST_DATABASE_URL es obligatorio para ejecutar pruebas de integración con PostgreSQL.');
+    throw new Error('TEST_DATABASE_URL o DATABASE_URL es obligatorio para ejecutar pruebas de integración con PostgreSQL.');
   }
 
   if (!connectionString && !host) {

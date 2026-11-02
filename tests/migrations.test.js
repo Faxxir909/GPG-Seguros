@@ -10,14 +10,24 @@ const root = path.join(__dirname, '..');
 test('migraciones versionadas y ordenadas', () => {
   const files = listMigrationFiles();
   assert.deepStrictEqual(files, [...files].sort());
-  assert.ok(files.length >= 2);
+  assert.ok(files.length >= 3);
   assert.match(files[0], /^001_/);
+  assert.match(files[1], /^002_/);
+  assert.match(files[2], /^003_/);
 
   for (const file of files) {
     const content = fs.readFileSync(path.join(root, 'migrations', file), 'utf8');
     assert.match(checksum(content), /^[a-f0-9]{64}$/);
     assert.ok(content.trim().length > 100);
   }
+});
+
+test('la migración 003 instala protección append-only en auditoría y constraints', () => {
+  const sql = fs.readFileSync(path.join(root, 'migrations', '003_concurrency_and_integrity.sql'), 'utf8');
+  assert.match(sql, /CREATE OR REPLACE FUNCTION gpg_proteger_auditoria_append_only/);
+  assert.match(sql, /CREATE TRIGGER trg_auditoria_append_only/);
+  assert.match(sql, /cotizaciones_estado_check/);
+  assert.match(sql, /idx_polizas_numero_renovacion_asc/);
 });
 
 test('el esquema base contiene integridad financiera y referencial', () => {

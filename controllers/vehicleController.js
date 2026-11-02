@@ -21,11 +21,13 @@ async function createVehicle(req, res, next) {
     return next(error);
   }
 
+  const cleanPatente = String(patente).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+
   try {
     const result = await db.run(`
       INSERT INTO vehiculos (cliente_id, marca, modelo, version, anio, patente, chasis, motor, uso)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [cliente_id, marca, modelo, version, anio, patente, chasis, motor, uso]);
+    `, [cliente_id, marca, modelo, version, anio, cleanPatente, chasis, motor, uso]);
     res.status(201).json({ id: result.id, message: 'Vehículo guardado con éxito' });
   } catch (err) {
     next(err);
@@ -34,12 +36,13 @@ async function createVehicle(req, res, next) {
 
 async function updateVehicle(req, res, next) {
   const { marca, modelo, version, anio, patente, chasis, motor, uso } = req.body;
+  const cleanPatente = patente ? String(patente).trim().toUpperCase().replace(/[^A-Z0-9]/g, '') : null;
   try {
     await db.run(`
       UPDATE vehiculos
-      SET marca = ?, modelo = ?, version = ?, anio = ?, patente = ?, chasis = ?, motor = ?, uso = ?
+      SET marca = ?, modelo = ?, version = ?, anio = ?, patente = COALESCE(?, patente), chasis = ?, motor = ?, uso = ?
       WHERE id = ?
-    `, [marca, modelo, version, anio, patente, chasis, motor, uso, req.params.id]);
+    `, [marca, modelo, version, anio, cleanPatente, chasis, motor, uso, req.params.id]);
     res.json({ message: 'Vehículo actualizado con éxito' });
   } catch (err) {
     next(err);
@@ -85,116 +88,101 @@ async function getVersions(req, res, next) {
   }
 }
 
-async function lookupVehicle(req, res, next) {
-  const { patente } = req.query;
-  if (!patente) {
+function normalizeAndValidatePlate(rawPlate) {
+  if (!rawPlate || typeof rawPlate !== 'string') {
     const error = new Error('La patente es requerida.');
     error.status = 400;
-    return next(error);
+    throw error;
   }
 
-  const clean = patente.toUpperCase().replace(/[^A-Z0-9]/g, '');
-  if (clean.length < 6 || clean.length > 7) {
-    const error = new Error('El formato de la patente no es válido.');
+  const clean = rawPlate.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+  let formato = null;
+  let tipoVehiculo = 'auto';
+
+  if (/^[A-Z]{2}\d{3}[A-Z]{2}$/.test(clean)) {
+    formato = 'mercosur_auto';
+    tipoVehiculo = 'automotor';
+  } else if (/^[A-Z]{3}\d{3}$/.test(clean)) {
+    formato = 'tradicional_auto';
+    tipoVehiculo = 'automotor';
+  } else if (/^[A-Z]\d{3}[A-Z]{3}$/.test(clean)) {
+    formato = 'mercosur_moto';
+    tipoVehiculo = 'motovehiculo';
+  } else if (/^\d{3}[A-Z]{3}$/.test(clean)) {
+    formato = 'tradicional_moto';
+    tipoVehiculo = 'motovehiculo';
+  }
+
+  if (!formato) {
+    const error = new Error('El formato de la patente no es válido. Formatos admitidos: Mercosur (ej: AA123BB, A123BCD) o tradicional (ej: ABC123, 123ABC).');
     error.status = 400;
-    return next(error);
+    throw error;
   }
 
+  return {
+    patente: clean,
+    formato,
+    tipoVehiculo
+  };
+}
+
+async function lookupVehicle(req, res, next) {
   try {
-    let isMercosur = false;
-    let isOld = false;
+    const { patente } = req.query;
+    const validated = normalizeAndValidatePlate(patente);
 
-    if (/^[A-Z]{2}\d{3}[A-Z]{2}$/.test(clean)) {
-      isMercosur = true;
-    } else if (/^[A-Z]{3}\d{3}$/.test(clean)) {
-      isOld = true;
+    // 1. Buscar si la patente ya existe en la base de datos local
+    const existingVehicle = await db.get(`
+      SELECT v.id, v.marca, v.modelo, v.version, v.anio, v.patente, v.chasis, v.motor, v.uso,
+             c.id as cliente_id, c.nombre as cliente_nombre
+      FROM vehiculos v
+      JOIN clientes c ON v.cliente_id = c.id
+      WHERE UPPER(REGEXP_REPLACE(v.patente, '[^A-Za-z0-9]', '', 'g')) = ?
+      ORDER BY v.id DESC LIMIT 1
+    `, [validated.patente]);
+
+    if (existingVehicle) {
+      return res.json({
+        patente: validated.patente,
+        formato: validated.formato,
+        tipo_vehiculo: validated.tipoVehiculo,
+        fuente: 'base_local',
+        requiere_carga_manual: false,
+        datos_registrales: {
+          marca: existingVehicle.marca,
+          modelo: existingVehicle.modelo,
+          version: existingVehicle.version,
+          anio: existingVehicle.anio,
+          chasis: existingVehicle.chasis || null,
+          motor: existingVehicle.motor || null,
+          uso: existingVehicle.uso || 'particular'
+        },
+        vehiculo_id: existingVehicle.id,
+        cliente_asociado: {
+          id: existingVehicle.cliente_id,
+          nombre: existingVehicle.cliente_nombre
+        },
+        sugerencias_catalogo: []
+      });
     }
 
-    if (!isMercosur && !isOld) {
-      if (clean.length === 7) isMercosur = true;
-      else isOld = true;
-    }
-
-    let year = 2018;
-    if (isMercosur) {
-      const prefix = clean.substring(0, 2);
-      if (prefix < 'AB') year = 2016;
-      else if (prefix < 'AC') year = 2017;
-      else if (prefix < 'AD') year = 2018;
-      else if (prefix < 'AE') year = 2019;
-      else if (prefix < 'AF') year = 2021;
-      else if (prefix < 'AG') year = 2023;
-      else year = 2025;
-    } else {
-      const firstLetter = clean.charAt(0);
-      const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-      const idx = alphabet.indexOf(firstLetter);
-      if (idx < 0) year = 2005;
-      else {
-        year = 1995 + Math.floor((idx / 18) * 20);
-        if (year > 2015) year = 2015;
-      }
-    }
-
-    let hash = 0;
-    for (let i = 0; i < clean.length; i++) {
-      hash = clean.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    hash = Math.abs(hash);
-
-    const carPool = [
-      { brand: 'Toyota', models: ['Corolla', 'Hilux', 'Etios', 'Yaris', 'SW4'], prefix: '9BH' },
-      { brand: 'Ford', models: ['Ranger', 'Ka', 'Fiesta', 'Focus', 'EcoSport'], prefix: '8AF' },
-      { brand: 'Fiat', models: ['Cronos', 'Toro', 'Argo', 'Mobi', 'Uno'], prefix: '9BD' },
-      { brand: 'Peugeot', models: ['208', '308', '2008', 'Partner'], prefix: '8AD' },
-      { brand: 'Chevrolet', models: ['Onix', 'Cruze', 'Tracker', 'S10'], prefix: '9BG' },
-      { brand: 'Volkswagen', models: ['Gol Trend', 'Amarok', 'T-Cross', 'Polo', 'Vento', 'Taos'], prefix: '8AJ' },
-      { brand: 'Renault', models: ['Sandero', 'Kangoo', 'Logan', 'Duster', 'Alaskan'], prefix: '8A1' },
-      { brand: 'Citroen', models: ['C3', 'C4 Cactus', 'Berlingo'], prefix: '8AD' },
-      { brand: 'Honda', models: ['Civic', 'HR-V', 'Fit'], prefix: '93H' }
-    ];
-
-    const brandObj = carPool[hash % carPool.length];
-    const model = brandObj.models[(hash >> 2) % brandObj.models.length];
-
-    let version = '';
-    const versions = await db.all('SELECT version FROM catalogo_vehiculos WHERE marca = ? AND modelo = ? ORDER BY version ASC', [brandObj.brand, model]);
-    if (versions && versions.length > 0) {
-      version = versions[(hash >> 4) % versions.length].version;
-    }
-
-    const vinChars = 'ABCDEFGHJKLMNPRSTUVWXYZ0123456789';
-    let chasis = brandObj.prefix;
-    for (let i = 0; i < 5; i++) {
-      chasis += vinChars.charAt((hash + i) % 24);
-    }
-    chasis += 'X';
-
-    const vinYears = {
-      1995: 'S', 1996: 'T', 1997: 'V', 1998: 'W', 1999: 'X', 2000: 'Y',
-      2001: '1', 2002: '2', 2003: '3', 2004: '4', 2005: '5', 2006: '6', 2007: '7', 2008: '8', 2009: '9',
-      2010: 'A', 2011: 'B', 2012: 'C', 2013: 'D', 2014: 'E', 2015: 'F', 2016: 'G', 2017: 'H', 2018: 'J', 2019: 'K',
-      2020: 'L', 2021: 'M', 2022: 'N', 2023: 'P', 2024: 'R', 2025: 'S', 2026: 'T'
-    };
-    chasis += vinYears[year] || 'J';
-    chasis += 'A';
-
-    const serial = String((hash % 900000) + 100000);
-    chasis += serial;
-
-    const motorPrefixes = ['K4M', 'F4R', '1ZZ', 'THP', 'EC5', 'PUMA', 'MSI', 'FSE', 'E-TORQ', 'DGR'];
-    const motorPrefix = motorPrefixes[hash % motorPrefixes.length];
-    const motorSerial = String((hash * 7) % 900000 + 100000);
-    const motor = `${motorPrefix}-${motorSerial}`;
+    // 2. Si no existe en la base local y no hay proveedor externo integrado (DNRPA/InfoAuto),
+    // devolver únicamente la patente normalizada y estado claro de carga manual requerida.
+    // NUNCA inventar números de chasis, motor o marcas sintéticas.
+    const catalogBrands = await db.all('SELECT DISTINCT marca FROM catalogo_vehiculos ORDER BY marca ASC LIMIT 15');
 
     res.json({
-      marca: brandObj.brand,
-      modelo: model,
-      version: version || 'Base',
-      anio: year,
-      patente: clean,
-      chasis: chasis,
-      motor: motor
+      patente: validated.patente,
+      formato: validated.formato,
+      tipo_vehiculo: validated.tipoVehiculo,
+      fuente: 'ninguna',
+      requiere_carga_manual: true,
+      mensaje: 'No hay proveedor registral externo configurado. Por favor ingrese los datos del vehículo manualmente.',
+      datos_registrales: null,
+      sugerencias_catalogo: {
+        marcas_disponibles: catalogBrands.map(b => b.marca)
+      }
     });
   } catch (err) {
     next(err);
@@ -209,5 +197,6 @@ module.exports = {
   getBrands,
   getModels,
   getVersions,
-  lookupVehicle
+  lookupVehicle,
+  normalizeAndValidatePlate
 };

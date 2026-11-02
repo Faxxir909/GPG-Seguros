@@ -1,5 +1,7 @@
 const db = require('../db');
 const { getCommissionRate } = require('../services/commissionService');
+const { parseExcelBuffer, findRowValue, cleanMoney, parseExcelMoney, parseExcelDate, SECCION_MAP } = require('../services/importerService');
+const { ensurePolicyInstallments } = require('./paymentController');
 
 async function getPolicies(req, res, next) {
   const { page, limit, search, estado, compania, vencimiento } = req.query;
@@ -104,6 +106,8 @@ async function createPolicy(req, res, next) {
         VALUES (?, 'nota', ?)
       `, [cliente_id, `Se emitió la póliza Nº ${numero_poliza} (${compania}) para el vehículo.`]);
 
+      await ensurePolicyInstallments(polRes.id, trx);
+
       return polRes;
     }, { userId: req.user?.id, requestId: req.id });
 
@@ -146,59 +150,90 @@ async function updatePolicy(req, res, next) {
 }
 
 async function renewPolicy(req, res, next) {
-  const { tipo, numero_poliza } = req.body;
+  const policyId = parseInt(req.params.id, 10);
+  if (!policyId || policyId <= 0) {
+    return res.status(400).json({ error: 'ID de póliza inválido. Debe ser un entero positivo.' });
+  }
+
+  const { tipo, numero_poliza, monto_total, valor_cuota } = req.body;
+  const tipoRenovacion = (tipo || 'cuatrimestral').toLowerCase().trim();
+
+  if (!['cuatrimestral', 'anual'].includes(tipoRenovacion)) {
+    return res.status(400).json({ error: 'Tipo de renovación inválido. Debe ser cuatrimestral o anual.' });
+  }
+
   try {
-    const oldPolicy = await db.get('SELECT * FROM polizas WHERE id = ?', [req.params.id]);
-    if (!oldPolicy) {
-      const error = new Error('Póliza no encontrada');
-      error.status = 404;
-      return next(error);
-    }
-
-    const format = (d) => d.toISOString().split('T')[0];
-    let nuevaFechaInicio = new Date(oldPolicy.fecha_vencimiento);
-    let nuevaFechaVencimiento = new Date(oldPolicy.fecha_vencimiento);
-    
-    let nuevoNumero = oldPolicy.numero_poliza;
-    let nuevoNumRen = oldPolicy.numero_renovacion || 0;
-
-    if (tipo === 'cuatrimestral') {
-      nuevaFechaVencimiento.setMonth(nuevaFechaVencimiento.getMonth() + 4);
-      nuevoNumRen += 1;
-    } else {
-      nuevaFechaVencimiento.setFullYear(nuevaFechaVencimiento.getFullYear() + 1);
-      nuevoNumero = numero_poliza || (oldPolicy.numero_poliza + '-REN');
-      nuevoNumRen = 0;
-    }
-
-    const factorInflacion = tipo === 'cuatrimestral' ? 1.15 : 1.30;
-    const nuevoMontoTotal = oldPolicy.monto_total * factorInflacion;
-    const nuevoValorCuota = oldPolicy.valor_cuota * factorInflacion;
-
-    const periodo = format(nuevaFechaInicio).substring(0, 7);
-
-    const descripcionLog = tipo === 'cuatrimestral' 
-      ? `Renovación cuatrimestral de póliza Nº ${oldPolicy.numero_poliza} (Ren. ${nuevoNumRen}).`
-      : `Renovación anual de póliza Nº ${oldPolicy.numero_poliza}. Nueva póliza emitida: ${nuevoNumero}`;
-
-    // Ejecutar renovación en una transacción atómica
     const result = await db.withTransaction(async (trx) => {
-      const lockedPolicy = await trx.get('SELECT id FROM polizas WHERE id = ? FOR UPDATE', [oldPolicy.id]);
-      if (!lockedPolicy) {
-        const error = new Error('Póliza no encontrada');
+      // 1. Bloqueo de fila para evitar que dos peticiones simultáneas renueven la misma póliza
+      const oldPolicy = await trx.get('SELECT * FROM polizas WHERE id = ? FOR UPDATE', [policyId]);
+      if (!oldPolicy) {
+        const error = new Error('Póliza no encontrada.');
         error.status = 404;
         throw error;
       }
-      const tasa = await getCommissionRate(oldPolicy.compania, oldPolicy.cobertura, trx);
-      const montoComision = nuevoValorCuota * tasa;
+
+      // 2. Verificar que no exista ya una renovación para esta póliza
+      const existingRenewal = await trx.get(
+        'SELECT id FROM polizas WHERE numero_poliza = ? AND numero_renovacion > ? LIMIT 1',
+        [oldPolicy.numero_poliza, oldPolicy.numero_renovacion]
+      );
+      if (existingRenewal) {
+        const error = new Error('Esta póliza ya cuenta con una renovación registrada.');
+        error.status = 409;
+        throw error;
+      }
+
+      const format = (d) => d.toISOString().split('T')[0];
+      const nuevaFechaInicio = new Date(oldPolicy.fecha_vencimiento);
+      const nuevaFechaVencimiento = new Date(oldPolicy.fecha_vencimiento);
+
+      let nuevoNumero = oldPolicy.numero_poliza;
+      let nuevoNumRen = oldPolicy.numero_renovacion || 0;
+
+      if (tipoRenovacion === 'cuatrimestral') {
+        nuevaFechaVencimiento.setMonth(nuevaFechaVencimiento.getMonth() + 4);
+        nuevoNumRen += 1;
+      } else {
+        nuevaFechaVencimiento.setFullYear(nuevaFechaVencimiento.getFullYear() + 1);
+        nuevoNumero = numero_poliza ? String(numero_poliza).trim() : `${oldPolicy.numero_poliza}-REN`;
+        nuevoNumRen = 0;
+
+        // Comprobar si el nuevo número ya está en uso
+        const duplicate = await trx.get('SELECT id FROM polizas WHERE numero_poliza = ? AND numero_renovacion = 0', [nuevoNumero]);
+        if (duplicate) {
+          const error = new Error(`Ya existe una póliza registrada con el número ${nuevoNumero}.`);
+          error.status = 409;
+          throw error;
+        }
+      }
+
+      const factorInflacion = tipoRenovacion === 'cuatrimestral' ? 1.15 : 1.30;
+      const parsedMonto = monto_total !== undefined && monto_total !== null && monto_total !== '' ? parseFloat(monto_total) : NaN;
+      const parsedCuota = valor_cuota !== undefined && valor_cuota !== null && valor_cuota !== '' ? parseFloat(valor_cuota) : NaN;
+
+      const nuevoMontoTotal = (!isNaN(parsedMonto) && parsedMonto > 0)
+        ? Number(parsedMonto.toFixed(2))
+        : Number((oldPolicy.monto_total * factorInflacion).toFixed(2));
+      const nuevoValorCuota = (!isNaN(parsedCuota) && parsedCuota > 0)
+        ? Number(parsedCuota.toFixed(2))
+        : Number((oldPolicy.valor_cuota * factorInflacion).toFixed(2));
+
+      const fechaInicioIso = nuevaFechaInicio.toISOString().substring(0, 10);
+      const fechaVencimientoIso = nuevaFechaVencimiento.toISOString().substring(0, 10);
+      const periodo = fechaInicioIso.substring(0, 7);
+
+      const descripcionLog = tipoRenovacion === 'cuatrimestral'
+        ? `Renovación cuatrimestral de póliza Nº ${oldPolicy.numero_poliza} (Ren. ${nuevoNumRen}).`
+        : `Renovación anual de póliza Nº ${oldPolicy.numero_poliza}. Nueva póliza emitida: ${nuevoNumero}`;
+
       const newPolRes = await trx.run(`
         INSERT INTO polizas (numero_poliza, numero_renovacion, fecha_inicio, fecha_vencimiento, cobertura, estado, monto_total, valor_cuota, forma_pago, compania, cliente_id, vehiculo_id)
         VALUES (?, ?, ?, ?, ?, 'vigente', ?, ?, ?, ?, ?, ?)
       `, [
         nuevoNumero,
         nuevoNumRen,
-        format(nuevaFechaInicio),
-        format(nuevaFechaVencimiento),
+        fechaInicioIso,
+        fechaVencimientoIso,
         oldPolicy.cobertura,
         nuevoMontoTotal,
         nuevoValorCuota,
@@ -210,6 +245,9 @@ async function renewPolicy(req, res, next) {
 
       await trx.run("UPDATE polizas SET estado = 'vencida' WHERE id = ?", [oldPolicy.id]);
 
+      const tasa = await getCommissionRate(oldPolicy.compania, oldPolicy.cobertura, trx);
+      const montoComision = Number((nuevoValorCuota * tasa).toFixed(2));
+
       await trx.run(`
         INSERT INTO comisiones (poliza_id, compania, monto_poliza, tasa_comision, monto_comision, estado_pago, periodo)
         VALUES (?, ?, ?, ?, ?, 'pendiente', ?)
@@ -219,6 +257,8 @@ async function renewPolicy(req, res, next) {
         INSERT INTO crm_logs (cliente_id, tipo_contacto, descripcion)
         VALUES (?, 'nota', ?)
       `, [oldPolicy.cliente_id, descripcionLog]);
+
+      await ensurePolicyInstallments(newPolRes.id, trx);
 
       return newPolRes;
     }, { userId: req.user?.id, requestId: req.id });
@@ -380,6 +420,8 @@ async function smartCreatePolicy(req, res, next) {
       VALUES (?, 'nota', ?)
     `, [clienteId, `Carga Inteligente: Se emitió póliza Nº ${poliza.numero_poliza} (${poliza.compania}) desde lectura automática de PDF.`]);
 
+    await ensurePolicyInstallments(polizaId);
+
     res.status(201).json({
       success: true,
       poliza_id: polizaId,
@@ -391,102 +433,6 @@ async function smartCreatePolicy(req, res, next) {
     console.error('[smartCreatePolicy Error]:', err.stack || err.message || err);
     res.status(500).json({ error: 'Error al registrar la póliza: ' + err.message });
   }
-}
-
-function parseExcelDate(val) {
-  if (!val) return new Date().toISOString().substring(0, 10);
-  if (val instanceof Date) {
-    return val.toISOString().substring(0, 10);
-  }
-  if (typeof val === 'number') {
-    const date = new Date(Math.round((val - (25567 + 2)) * 86400 * 1000));
-    return date.toISOString().substring(0, 10);
-  }
-  const str = String(val).trim();
-  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(str)) {
-    const parts = str.split('/');
-    const day = parts[0].padStart(2, '0');
-    const month = parts[1].padStart(2, '0');
-    const year = parts[2];
-    return `${year}-${month}-${day}`;
-  }
-  if (/^\d{1,2}-\d{1,2}-\d{4}$/.test(str)) {
-    const parts = str.split('-');
-    const day = parts[0].padStart(2, '0');
-    const month = parts[1].padStart(2, '0');
-    const year = parts[2];
-    return `${year}-${month}-${day}`;
-  }
-  if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
-    return str.substring(0, 10);
-  }
-  return str;
-}
-
-function parseExcelMoney(val) {
-  if (val === undefined || val === null || val === '') return 0;
-  if (typeof val === 'number') return isNaN(val) ? 0 : val;
-  let str = String(val).trim();
-  if (!str) return 0;
-
-  // Remover todo excepto dígitos, puntos, comas y signo menos
-  str = str.replace(/[^0-9.,-]/g, '');
-  if (!str || str === '-') return 0;
-
-  // Si tiene puntos y comas: ej '125.450,50' o '125,450.50'
-  if (str.includes('.') && str.includes(',')) {
-    const lastDot = str.lastIndexOf('.');
-    const lastComma = str.lastIndexOf(',');
-    if (lastComma > lastDot) {
-      // 125.450,50 -> punto es miles, coma es decimal
-      str = str.replace(/\./g, '').replace(',', '.');
-    } else {
-      // 125,450.50 -> coma es miles, punto es decimal
-      str = str.replace(/,/g, '');
-    }
-  } else if (str.includes(',')) {
-    // Solo tiene coma: ej '125450,50' o '150,00' o '1,250'
-    const parts = str.split(',');
-    if (parts.length === 2 && parts[1].length <= 2) {
-      // Coma decimal (ej: 125,50 o 1500,0)
-      str = str.replace(',', '.');
-    } else if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
-      // Coma de miles (ej: 1,250 o 1,250,000)
-      str = str.replace(/,/g, '');
-    } else {
-      str = str.replace(',', '.');
-    }
-  } else if (str.includes('.')) {
-    // Solo tiene punto: ej '15.000' o '125.450' o '15.5'
-    const parts = str.split('.');
-    if (parts.length === 2 && parts[1].length === 3 && parseInt(parts[0]) > 0) {
-      // Punto de miles argentino típico (ej: 15.000, 85.500)
-      str = str.replace(/\./g, '');
-    } else if (parts.length > 2) {
-      // Múltiples puntos de miles (ej: 1.250.000)
-      str = str.replace(/\./g, '');
-    }
-  }
-
-  const num = parseFloat(str);
-  return isNaN(num) ? 0 : num;
-}
-
-function findRowValue(row, patterns) {
-  const keys = Object.keys(row);
-  for (const pattern of patterns) {
-    const key = keys.find(k => {
-      const trimmed = k.trim();
-      const withSpaces = trimmed.replace(/_/g, ' ');
-      const withUnderscores = trimmed.replace(/\s+/g, '_');
-      const collapsed = trimmed.replace(/[\s_.]+/g, '');
-      return pattern.test(trimmed) || pattern.test(withSpaces) || pattern.test(withUnderscores) || pattern.test(collapsed);
-    });
-    if (key && row[key] !== undefined && row[key] !== null && String(row[key]).trim() !== '') {
-      return row[key];
-    }
-  }
-  return undefined;
 }
 
 // Importar pólizas desde Excel
@@ -504,78 +450,14 @@ async function importPolicies(req, res, next) {
     return next(error);
   }
 
-  const XLSX = require('xlsx');
-
   try {
-    const workbook = XLSX.read(archivo.data, { type: 'buffer' });
-    if (!workbook || !workbook.SheetNames || !workbook.SheetNames.length) {
-      const error = new Error('El archivo Excel no contiene hojas válidas.');
-      error.status = 400;
-      return next(error);
-    }
-
-    let allRows = [];
-    for (const sheetName of workbook.SheetNames) {
-      const worksheet = workbook.Sheets[sheetName];
-      if (!worksheet) continue;
-
-      let sheetData = XLSX.utils.sheet_to_json(worksheet);
-
-      // Auto-detectar la fila de encabezados si hay filas de título arriba
-      if (sheetData.length === 0 || !sheetData.some(row => findRowValue(row, [/p[oó]liza/i, /tomador/i, /asegurado/i, /cliente/i, /patente/i, /dominio/i, /seccion/i, /ramo/i]))) {
-        const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-        const headerIndex = rawRows.findIndex(r => Array.isArray(r) && r.length >= 2 && r.some(cell => typeof cell === 'string' && /^(Póliza|Nº Póliza|Poliza|Nro Póliza|Nro_Poliza|Tomador|Cliente|Rama|Ramo|Seccion|Sección|Asegurado|Patente|Dominio)$/i.test(cell.trim())));
-        if (headerIndex !== -1) {
-          const headers = rawRows[headerIndex];
-          sheetData = rawRows.slice(headerIndex + 1).filter(r => r && r.length > 1).map(r => {
-            const obj = {};
-            headers.forEach((h, i) => {
-              if (h && r[i] !== undefined) obj[String(h).trim()] = r[i];
-            });
-            return obj;
-          });
-        }
-      }
-
-      if (sheetData && sheetData.length > 0) {
-        allRows.push(...sheetData);
-      }
-    }
-
-    if (!allRows || !allRows.length) {
-      const error = new Error('El archivo Excel está vacío o no tiene un formato reconocido.');
-      error.status = 400;
-      return next(error);
-    }
+    const allRows = parseExcelBuffer(archivo.data);
 
     let insertadas = 0;
     let actualizadas = 0;
     let omitidas = 0;
 
-    const seccionMap = {
-      '1': 'Automotores',
-      '01': 'Automotores',
-      '2': 'Motovehículos',
-      '02': 'Motovehículos',
-      '3': 'Incendio',
-      '03': 'Incendio',
-      '4': 'Cristales',
-      '04': 'Cristales',
-      '5': 'Transporte',
-      '05': 'Transporte',
-      '6': 'Responsabilidad Civil',
-      '06': 'Responsabilidad Civil',
-      '8': 'Combinado Familiar',
-      '08': 'Combinado Familiar',
-      '9': 'Integral de Comercio',
-      '09': 'Integral de Comercio',
-      '10': 'Accidentes Personales',
-      '11': 'Vida Colectivo',
-      '14': 'Seguro Técnico',
-      '18': 'Vida Individual',
-      '19': 'Sepelio',
-      '21': 'Caución'
-    };
+    const seccionMap = SECCION_MAP;
 
     for (const row of allRows) {
       const numero_poliza = findRowValue(row, [
@@ -729,10 +611,10 @@ async function importPolicies(req, res, next) {
         /fin/i
       ]);
 
-      const fecha_inicio = parseExcelDate(fecha_inicio_raw);
+      const fecha_inicio = parseExcelDate(fecha_inicio_raw, true);
       let fecha_vencimiento = parseExcelDate(fecha_vencimiento_raw);
 
-      if (!fecha_vencimiento_raw) {
+      if (!fecha_vencimiento) {
         const d = new Date(fecha_inicio);
         d.setFullYear(d.getFullYear() + 1);
         fecha_vencimiento = d.toISOString().substring(0, 10);
@@ -1019,6 +901,8 @@ async function importPolicies(req, res, next) {
           INSERT INTO comisiones (poliza_id, compania, monto_poliza, tasa_comision, monto_comision, estado_pago, periodo)
           VALUES (?, ?, ?, ?, ?, 'pendiente', ?)
         `, [polRes.id, compania, monto_total || valor_cuota, tasa, montoComision, periodo]);
+
+        await ensurePolicyInstallments(polRes.id);
       }
     }
 

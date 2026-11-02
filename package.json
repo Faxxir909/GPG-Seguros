@@ -7,7 +7,7 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "build": "echo \"Build ready for deployment\"",
-    "test": "node --test tests/unit.test.js tests/migrations.test.js",
+    "test": "node --test tests/unit.test.js tests/migrations.test.js tests/vehicle.test.js tests/storage.test.js tests/security.test.js tests/validation.test.js",
     "test:db": "node --test tests/postgres.integration.test.js",
     "db:preflight": "node scripts/db-preflight.js",
     "db:migrate": "node scripts/db-migrate.js",

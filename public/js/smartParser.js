@@ -25,6 +25,7 @@ async function processPdfFile(file) {
     const res = await fetch('/api/policies/parse-pdf', {
       method: 'POST',
       credentials: 'include',
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
       body: formData
     });
 

@@ -19,6 +19,7 @@ const paymentController = require('../controllers/paymentController');
 router.post('/auth/login', authController.login);
 router.post('/auth/google', authController.googleLogin);
 router.post('/auth/logout', authController.logout);
+router.get('/auth/me', checkRole(['admin', 'productor', 'administrativo']), authController.me);
 router.get('/auth/google-client-id', (req, res) => {
   res.json({ clientId: process.env.GOOGLE_CLIENT_ID || null });
 });

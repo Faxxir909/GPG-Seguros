@@ -348,6 +348,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const response = await fetch('/api/policies/import', {
         method: 'POST',
         credentials: 'include',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
         body: formData
       });
       const data = await response.json();

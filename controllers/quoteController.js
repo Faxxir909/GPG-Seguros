@@ -1,5 +1,6 @@
 const db = require('../db');
 const { getCommissionRate } = require('../services/commissionService');
+const { ensurePolicyInstallments } = require('./paymentController');
 
 async function getQuotes(req, res, next) {
   try {
@@ -100,6 +101,9 @@ async function convertQuote(req, res, next) {
         INSERT INTO crm_logs (cliente_id, tipo_contacto, descripcion)
         VALUES (?, 'nota', ?)
       `, [quote.cliente_id, `Cotización aceptada y convertida a Póliza Nº ${numero_poliza} (${quote.compania}).`]);
+
+      await ensurePolicyInstallments(policy.id, trx);
+
       return policy;
     }, { userId: req.user?.id, requestId: req.id });
 

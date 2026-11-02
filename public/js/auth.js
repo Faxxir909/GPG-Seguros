@@ -18,6 +18,22 @@ function checkAuth() {
   }
   try {
     currentUser = JSON.parse(userStr);
+
+    // Verificación asíncrona en servidor para revalidar la cookie de sesión
+    if (typeof apiFetch === 'function') {
+      apiFetch('/api/auth/me').then(data => {
+        if (data && data.user) {
+          currentUser = data.user;
+          localStorage.setItem('gpg_user', JSON.stringify(data.user));
+          if (typeof initUserUI === 'function') {
+            initUserUI(data.user);
+          }
+        }
+      }).catch(() => {
+        // Si el token expiró, apiFetch borra datos locales y redirige a /index.html
+      });
+    }
+
     return currentUser;
   } catch {
     localStorage.removeItem('gpg_user');
