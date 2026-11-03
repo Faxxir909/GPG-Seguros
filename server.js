@@ -19,6 +19,8 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 let httpServer = null;
 let databaseInitPromise = null;
+let maintenanceInterval = null;
+const MAINTENANCE_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 horas
 
 // Confiar en el primer proxy (Vercel, Cloudflare, Nginx) para resolución segura de IPs en rate limit
 app.set('trust proxy', 1);
@@ -61,7 +63,7 @@ app.use(helmet({
         "data:"
       ],
       imgSrc: ["'self'", "data:", "https:", "blob:"],
-      connectSrc: ["'self'", "https://accounts.google.com"],
+      connectSrc: ["'self'", "https://accounts.google.com", "https://cdn.jsdelivr.net", "https://cdnjs.cloudflare.com"],
       frameSrc: ["https://accounts.google.com"],
       objectSrc: ["'none'"],
       baseUri: ["'self'"],
@@ -95,15 +97,21 @@ try {
   }
 }
 
-app.use(cors({
-  origin: (origin, callback) => {
-    // Peticiones sin origen (ej: same-origin, curl, server-side) o dentro de la allowlist
-    if (!origin || allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-    callback(new Error('Acceso bloqueado por política CORS'));
-  },
-  credentials: true
+app.use(cors((req, callback) => {
+  const origin = req.headers.origin;
+  const host = req.get('host');
+  const selfOriginHttp = host ? `http://${host}` : null;
+  const selfOriginHttps = host ? `https://${host}` : null;
+
+  if (
+    !origin ||
+    origin === selfOriginHttp ||
+    origin === selfOriginHttps ||
+    allowedOrigins.includes(origin)
+  ) {
+    return callback(null, { origin: true, credentials: true });
+  }
+  callback(new Error('Acceso bloqueado por política CORS'));
 }));
 
 // 4. Rate limiters segmentados por criticidad
@@ -141,6 +149,7 @@ app.use(fileUpload({
 
 // 10. Protección de acceso a la interfaz principal (requiere sesión activa)
 app.get(['/dashboard.html', '/dashboard'], (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
   let token = req.cookies?.gpg_token;
   if (!token) {
     const authHeader = req.headers['authorization'];
@@ -246,6 +255,16 @@ app.use((err, req, res, next) => {
 
 async function start() {
   await ensureDatabaseReady();
+  if (!maintenanceInterval) {
+    maintenanceInterval = setInterval(() => {
+      db.runDailyMaintenance().catch(err => {
+        logger.error('[Scheduled Maintenance Error]:', err);
+      });
+    }, MAINTENANCE_INTERVAL_MS);
+    if (typeof maintenanceInterval.unref === 'function') {
+      maintenanceInterval.unref();
+    }
+  }
   httpServer = app.listen(PORT, '0.0.0.0', () => {
     console.log(`==================================================`);
     console.log(` CRM GPG SEGUROS - Productor Asesor de Seguros (PAS)`);
@@ -257,6 +276,10 @@ async function start() {
 
 async function shutdown(signal) {
   console.log(`[Shutdown]: recibido ${signal}`);
+  if (maintenanceInterval) {
+    clearInterval(maintenanceInterval);
+    maintenanceInterval = null;
+  }
   if (httpServer) {
     await new Promise(resolve => httpServer.close(resolve));
   }

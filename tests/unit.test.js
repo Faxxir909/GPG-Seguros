@@ -105,3 +105,44 @@ test('cálculo seguro de fechas en ensurePolicyInstallments sin month-rollover',
   assert.strictEqual(inserted[2].fecha_vencimiento, '2026-03-31');
   assert.strictEqual(inserted[3].fecha_vencimiento, '2026-04-30'); // Abril limitado a 30
 });
+
+const userController = require('../controllers/userController');
+
+test('validaciones de seguridad en userController (alta y autoprotección de admin)', async () => {
+  const createRes = () => {
+    const res = { statusCode: 200, body: null };
+    res.status = (code) => { res.statusCode = code; return res; };
+    res.json = (payload) => { res.body = payload; return res; };
+    return res;
+  };
+
+  // 1. Campos faltantes
+  const res1 = createRes();
+  await userController.createUser({ body: { usuario: 'nuevo' } }, res1, () => {});
+  assert.strictEqual(res1.statusCode, 400);
+
+  // 2. Contraseña corta
+  const res2 = createRes();
+  await userController.createUser({
+    body: { usuario: 'nuevo', password: '123', rol: 'productor', nombre: 'Nuevo Prod' }
+  }, res2, () => {});
+  assert.strictEqual(res2.statusCode, 400);
+  assert.match(res2.body.error, /6 caracteres/);
+
+  // 3. Rol inválido
+  const res3 = createRes();
+  await userController.createUser({
+    body: { usuario: 'nuevo', password: 'password123', rol: 'superroot', nombre: 'Nuevo' }
+  }, res3, () => {});
+  assert.strictEqual(res3.statusCode, 400);
+  assert.match(res3.body.error, /Rol inválido/);
+
+  // 4. Impedir que un admin se dé de baja a sí mismo en deleteUser
+  const res4 = createRes();
+  await userController.deleteUser({
+    params: { id: '5' },
+    user: { id: 5, rol: 'admin' }
+  }, res4, () => {});
+  assert.strictEqual(res4.statusCode, 400);
+  assert.match(res4.body.error, /propia cuenta/);
+});

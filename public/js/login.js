@@ -1,8 +1,21 @@
 // login.js — Lógica de inicio de sesión y Google Sign-In desacoplada de index.html
 
-// Redirección si ya está logueado (comprobamos si hay user guardado; el token está en cookie httpOnly)
+// Redirección si ya tiene sesión válida en el servidor (evita bucle infinito si localStorage quedó viejo)
 if (localStorage.getItem('gpg_user')) {
-  window.location.href = '/dashboard.html';
+  fetch('/api/auth/me', {
+    credentials: 'include',
+    headers: { 'X-Requested-With': 'XMLHttpRequest' }
+  })
+    .then(res => {
+      if (res.ok) {
+        window.location.href = '/dashboard.html';
+      } else {
+        localStorage.removeItem('gpg_user');
+      }
+    })
+    .catch(() => {
+      localStorage.removeItem('gpg_user');
+    });
 }
 
 const form = document.getElementById('loginForm');

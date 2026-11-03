@@ -7,7 +7,8 @@ async function loadQuotesList() {
   showTableSkeleton('quotes-table-body', 7, 4);
   try {
     const data = await apiFetch('/api/quotes');
-    allQuotes = data;
+    allQuotes = Array.isArray(data) ? data : (data.data || []);
+    quotesPage = 1;
     filterQuotes();
   } catch (err) {
     console.error(err);
@@ -25,7 +26,17 @@ function filterQuotes() {
     const matchStatus = !statusFilter || q.estado === statusFilter;
     return matchSearch && matchStatus;
   });
-  renderQuotesTable(filtered, !!(term || statusFilter));
+  const hasFilters = !!(term || statusFilter);
+  quotesPage = paginate({
+    items: filtered,
+    page: quotesPage,
+    pageSize: PAGE_SIZE,
+    tbodyId: 'quotes-table-body',
+    renderFn: (items) => renderQuotesTable(items, hasFilters),
+    wrapId: 'quotes-pagination-wrap',
+    infoId: 'quotes-pagination-info',
+    navId: 'quotes-pagination'
+  });
   renderCommercialFunnel(allQuotes);
 }
 
@@ -124,11 +135,18 @@ function openConvertQuoteModal(quoteId) {
 document.addEventListener('DOMContentLoaded', () => {
   const searchQuote = document.getElementById('search-quote');
   if (searchQuote) {
-    searchQuote.addEventListener('input', debounce(filterQuotes, 300));
+    searchQuote.addEventListener('input', debounce(() => { quotesPage = 1; filterQuotes(); }, 300));
   }
   const filterStatus = document.getElementById('filter-quote-status');
   if (filterStatus) {
-    filterStatus.addEventListener('change', filterQuotes);
+    filterStatus.addEventListener('change', () => { quotesPage = 1; filterQuotes(); });
+  }
+  const quotesPag = document.getElementById('quotes-pagination');
+  if (quotesPag) {
+    quotesPag.addEventListener('pagechange', (e) => {
+      quotesPage = parseInt(e.target.dataset.page, 10) || 1;
+      filterQuotes();
+    });
   }
 
   document.getElementById('formConvertirCotizacion')?.addEventListener('submit', async (e) => {

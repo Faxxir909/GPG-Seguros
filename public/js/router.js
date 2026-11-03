@@ -8,34 +8,57 @@ const PAGE_SIZE = 15;
 let activeClientId = null;
 let clientsPage = 1;
 let policiesPage = 1;
+let quotesPage = 1;
+let claimsPage = 1;
 let chartComisionesObj = null;
 let chartProduccionObj = null;
 let isAutoFilling = false;
 
-document.addEventListener('DOMContentLoaded', () => {
-  // 1. Verificar autenticación (redirige si no hay sesión)
+function hideSplashScreen(delayMs = 400) {
+  setTimeout(() => {
+    const splash = document.getElementById('splash-screen');
+    if (splash) {
+      splash.classList.add('splash-fade');
+      setTimeout(() => splash.remove(), 600);
+    }
+  }, delayMs);
+}
+
+function bootstrapApp() {
+  // Ocultar siempre la pantalla de carga incluso si algún módulo secundario demora
+  hideSplashScreen(400);
+
   const user = checkAuth();
   if (!user) return;
 
-  // 2. Ocultar splash
-  setTimeout(() => {
-    const splash = document.getElementById('splash-screen');
-    if (splash) { splash.classList.add('splash-fade'); setTimeout(() => splash.remove(), 600); }
-  }, 800);
+  try { initUserUI(user); } catch (e) { console.error('Error en initUserUI:', e); }
+  try { startSessionTimer(); } catch (e) { console.error('Error en startSessionTimer:', e); }
+  try { initLogoutButton(); } catch (e) { console.error('Error en initLogoutButton:', e); }
+  try { initSidebarMobile(); } catch (e) { console.error('Error en initSidebarMobile:', e); }
+  try { initNavigation(); } catch (e) { console.error('Error en initNavigation:', e); }
+  try {
+    if (typeof initProvinceAndCitySelects === 'function') {
+      initProvinceAndCitySelects();
+    }
+  } catch (e) {
+    console.error('Error en initProvinceAndCitySelects:', e);
+  }
 
-  // 3. Inicializar UI
-  initUserUI(user);
-  startSessionTimer();
-  initLogoutButton();
-  initSidebarMobile();
-  initNavigation();
+  try {
+    loadPanel('dashboard');
+  } catch (e) {
+    console.error('Error al cargar panel inicial:', e);
+  }
+}
 
-  // 4. Inicializar selectores de provincia/localidad
-  initProvinceAndCitySelects();
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', bootstrapApp);
+} else {
+  bootstrapApp();
+}
 
-  // 5. Cargar panel inicial
-  loadPanel('dashboard');
-});
+// Failsafe absoluto para que nunca quede bloqueada la pantalla de carga
+setTimeout(() => hideSplashScreen(0), 2500);
 
 /** Sidebar toggle para móviles */
 function initSidebarMobile() {
@@ -100,7 +123,8 @@ function loadPanel(panelId) {
     siniestros:   { t: 'Gestión de Siniestros',    s: 'Seguimiento de incidentes, peritajes y documentación' },
     agenda:       { t: 'Agenda y Seguimiento',     s: 'Recordatorios, tareas pendientes y renovaciones próximas' },
     comisiones:   { t: 'Gestión de Comisiones',    s: 'Liquidación de comisiones de seguros y producción' },
-    reportes:     { t: 'Reportes y Estadísticas',  s: 'Exportación de datos a PDF/Excel y análisis anual' }
+    reportes:     { t: 'Reportes y Estadísticas',  s: 'Exportación de datos a PDF/Excel y análisis anual' },
+    usuarios:     { t: 'Usuarios y Sistema',       s: 'Administración de cuentas, permisos, mantenimiento y auditoría' }
   };
 
   if (titles[panelId]) {
@@ -117,5 +141,6 @@ function loadPanel(panelId) {
     case 'agenda':       loadAgendaList();       break;
     case 'comisiones':   loadCommissionsList();  break;
     case 'reportes':     loadReportsData();      break;
+    case 'usuarios':     if (typeof loadUsersPanel === 'function') loadUsersPanel(); break;
   }
 }

@@ -372,10 +372,21 @@ function showTableError(tbodyId, colsCount = 6, errorMessage = 'Error al cargar 
     </tr>`;
 }
 
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     normalizeArgentinePhone,
     formatDate,
-    formatMoney
+    formatMoney,
+    escapeHtml
   };
 }

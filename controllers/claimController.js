@@ -1,15 +1,53 @@
 const db = require('../db');
 
 async function getClaims(req, res, next) {
+  const { page, limit, search, estado } = req.query || {};
   try {
-    const claims = await db.all(`
+    let sql = `
       SELECT s.*, c.nombre as cliente_nombre, v.marca, v.modelo, v.patente, p.numero_poliza, p.compania
       FROM siniestros s
       JOIN clientes c ON s.cliente_id = c.id
       LEFT JOIN vehiculos v ON s.vehiculo_id = v.id
       LEFT JOIN polizas p ON s.poliza_id = p.id
-      ORDER BY s.fecha DESC
-    `);
+      WHERE 1=1
+    `;
+    const params = [];
+
+    if (search) {
+      sql += ` AND (s.numero_siniestro ILIKE ? OR c.nombre ILIKE ? OR v.patente ILIKE ? OR s.descripcion ILIKE ?)`;
+      const s = `%${search}%`;
+      params.push(s, s, s, s);
+    }
+    if (estado) {
+      sql += ` AND s.estado = ?`;
+      params.push(estado);
+    }
+
+    sql += ` ORDER BY s.fecha DESC, s.id DESC`;
+
+    if (limit) {
+      const parsedLimit = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 15));
+      const parsedPage = Math.max(1, Number.parseInt(page, 10) || 1);
+      const offset = (parsedPage - 1) * parsedLimit;
+
+      const countSql = `SELECT COUNT(*) as count FROM (${sql}) as count_q`;
+      const countRes = await db.get(countSql, params);
+      const total = Number.parseInt(countRes?.count || 0, 10);
+
+      sql += ` LIMIT ? OFFSET ?`;
+      params.push(parsedLimit, offset);
+
+      const claims = await db.all(sql, params);
+      return res.json({
+        data: claims,
+        total,
+        page: parsedPage,
+        limit: parsedLimit,
+        totalPages: Math.ceil(total / parsedLimit) || 1
+      });
+    }
+
+    const claims = await db.all(sql, params);
     res.json(claims);
   } catch (err) {
     next(err);

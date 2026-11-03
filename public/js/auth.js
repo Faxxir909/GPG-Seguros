@@ -9,37 +9,39 @@
 
 let currentUser = null;
 
-/** Verifica sesión activa. Si no hay datos de usuario, redirige al login. */
+/** Verifica sesión activa. Si no hay datos de usuario, revalida con el servidor o redirige al login. */
 function checkAuth() {
   const userStr = localStorage.getItem('gpg_user');
-  if (!userStr) {
-    window.location.href = '/index.html';
-    return null;
-  }
-  try {
-    currentUser = JSON.parse(userStr);
-
-    // Verificación asíncrona en servidor para revalidar la cookie de sesión
-    if (typeof apiFetch === 'function') {
-      apiFetch('/api/auth/me').then(data => {
-        if (data && data.user) {
-          currentUser = data.user;
-          localStorage.setItem('gpg_user', JSON.stringify(data.user));
-          if (typeof initUserUI === 'function') {
-            initUserUI(data.user);
-          }
-        }
-      }).catch(() => {
-        // Si el token expiró, apiFetch borra datos locales y redirige a /index.html
-      });
+  if (userStr) {
+    try {
+      currentUser = JSON.parse(userStr);
+    } catch {
+      localStorage.removeItem('gpg_user');
+      currentUser = null;
     }
-
-    return currentUser;
-  } catch {
-    localStorage.removeItem('gpg_user');
-    window.location.href = '/index.html';
-    return null;
   }
+
+  // Revalidar siempre la cookie de sesión en el servidor
+  if (typeof apiFetch === 'function') {
+    apiFetch('/api/auth/me').then(data => {
+      if (data && data.user) {
+        currentUser = data.user;
+        localStorage.setItem('gpg_user', JSON.stringify(data.user));
+        if (typeof initUserUI === 'function') {
+          initUserUI(data.user);
+        }
+      }
+    }).catch(() => {
+      // Si el token expiró, apiFetch borra datos locales y redirige a /index.html
+    });
+  }
+
+  if (!currentUser) {
+    // Fallback temporal mientras /api/auth/me responde si entró con cookie válida
+    currentUser = { id: 0, nombre: 'Usuario', rol: 'productor', usuario: '' };
+  }
+
+  return currentUser;
 }
 
 /** Timer de sesión en sidebar */
@@ -58,15 +60,27 @@ function startSessionTimer() {
 
 /** Inicializa la UI del usuario en el sidebar */
 function initUserUI(user) {
-  document.getElementById('nav-user-name').innerText = user.nombre;
-  document.getElementById('nav-user-role').innerText = user.rol;
-  document.getElementById('nav-user-avatar').innerText = user.nombre.substring(0, 1).toUpperCase();
-  document.getElementById('current-date-badge').innerText = `Hoy: ${new Date().toLocaleDateString()}`;
+  if (!user) return;
+  const nombre = String(user.nombre || user.usuario || 'Usuario');
+  const rol = String(user.rol || '');
+
+  const nameEl = document.getElementById('nav-user-name');
+  const roleEl = document.getElementById('nav-user-role');
+  const avatarEl = document.getElementById('nav-user-avatar');
+  const dateEl = document.getElementById('current-date-badge');
+
+  if (nameEl) nameEl.innerText = nombre;
+  if (roleEl) roleEl.innerText = rol;
+  if (avatarEl) avatarEl.innerText = nombre.substring(0, 1).toUpperCase();
+  if (dateEl) dateEl.innerText = `Hoy: ${new Date().toLocaleDateString()}`;
 
   // Controlar visibilidad según rol
-  if (user.rol === 'admin' || user.rol === 'productor') {
+  if (rol === 'admin' || rol === 'productor') {
     document.getElementById('menu-comisiones')?.classList.remove('d-none');
     document.getElementById('btn-delete-detail-client')?.classList.remove('d-none');
+  }
+  if (rol === 'admin') {
+    document.getElementById('menu-usuarios')?.classList.remove('d-none');
   }
 }
 

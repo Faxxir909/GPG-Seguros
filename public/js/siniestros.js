@@ -7,7 +7,8 @@ async function loadClaimsList() {
   showTableSkeleton('claims-table-body', 8, 4);
   try {
     const data = await apiFetch('/api/claims');
-    allClaims = data;
+    allClaims = Array.isArray(data) ? data : (data.data || []);
+    claimsPage = 1;
     filterClaims();
   } catch (err) {
     console.error(err);
@@ -17,15 +18,32 @@ async function loadClaimsList() {
 
 function filterClaims() {
   const searchEl = document.getElementById('search-claim');
+  const statusEl = document.getElementById('filter-claim-status');
   const term = searchEl ? searchEl.value.toLowerCase().trim() : '';
-  const filtered = !term ? allClaims : allClaims.filter(s => {
+  const statusFilter = statusEl ? statusEl.value : '';
+
+  const filtered = allClaims.filter(s => {
     const num = (s.numero_siniestro || '').toLowerCase();
     const cli = (s.cliente_nombre || '').toLowerCase();
     const pat = (s.patente || '').toLowerCase();
     const desc = (s.descripcion || '').toLowerCase();
-    return num.includes(term) || cli.includes(term) || pat.includes(term) || desc.includes(term);
+    const matchSearch = !term || num.includes(term) || cli.includes(term) || pat.includes(term) || desc.includes(term);
+    const matchStatus = !statusFilter || s.estado === statusFilter;
+    return matchSearch && matchStatus;
   });
-  renderClaimsTable(filtered, !!term);
+
+  const hasFilters = !!(term || statusFilter);
+
+  claimsPage = paginate({
+    items: filtered,
+    page: claimsPage,
+    pageSize: PAGE_SIZE,
+    tbodyId: 'claims-table-body',
+    renderFn: (items) => renderClaimsTable(items, hasFilters),
+    wrapId: 'claims-pagination-wrap',
+    infoId: 'claims-pagination-info',
+    navId: 'claims-pagination'
+  });
 }
 
 function renderClaimsTable(claims, hasSearch = false) {
@@ -57,7 +75,18 @@ async function updateClaimStatus(claimId, newStatus) {
 document.addEventListener('DOMContentLoaded', () => {
   const searchClaim = document.getElementById('search-claim');
   if (searchClaim) {
-    searchClaim.addEventListener('input', debounce(filterClaims, 300));
+    searchClaim.addEventListener('input', debounce(() => { claimsPage = 1; filterClaims(); }, 300));
+  }
+  const filterClaimStatus = document.getElementById('filter-claim-status');
+  if (filterClaimStatus) {
+    filterClaimStatus.addEventListener('change', () => { claimsPage = 1; filterClaims(); });
+  }
+  const claimsPag = document.getElementById('claims-pagination');
+  if (claimsPag) {
+    claimsPag.addEventListener('pagechange', (e) => {
+      claimsPage = parseInt(e.target.dataset.page, 10) || 1;
+      filterClaims();
+    });
   }
 });
 

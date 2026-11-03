@@ -119,6 +119,12 @@
             <span>Reportes</span>
           </a>
         </li>
+        <li id="menu-usuarios" class="d-none">
+          <a href="#" class="sidebar-link" data-target="usuarios">
+            <i class="fa-solid fa-users-gear"></i>
+            <span>Usuarios y Sistema</span>
+          </a>
+        </li>
       </ul>
 
       <!-- USER FOOTER -->
@@ -737,6 +743,11 @@
             </tbody>
           </table>
         </div>
+        <!-- Paginación Cotizaciones -->
+        <div class="d-flex justify-content-between align-items-center mt-3" id="quotes-pagination-wrap">
+          <span class="text-muted small" id="quotes-pagination-info"></span>
+          <nav><ul class="pagination pagination-sm mb-0" id="quotes-pagination"></ul></nav>
+        </div>
       </section>
 
       <!-- ==========================================
@@ -744,7 +755,16 @@
            ========================================== -->
       <section id="panel-siniestros" class="panel-section d-none">
         <div class="d-flex justify-content-between align-items-center mb-3">
-          <input type="text" class="form-control w-50" id="search-claim" placeholder="Buscar siniestro por Nº, cliente o patente...">
+          <div class="d-flex gap-2 w-70">
+            <input type="text" class="form-control" id="search-claim" placeholder="Buscar siniestro por Nº, cliente o patente...">
+            <select class="form-select" id="filter-claim-status" style="width: 190px;">
+              <option value="">Todos los Estados</option>
+              <option value="denunciado">Denunciado</option>
+              <option value="en_proceso">En Proceso</option>
+              <option value="doc_pendiente">Doc. Pendiente</option>
+              <option value="resuelto">Resuelto</option>
+            </select>
+          </div>
         </div>
 
         <div class="table-responsive">
@@ -765,6 +785,11 @@
               <tr><td colspan="8" class="text-center py-4 text-muted">Cargando siniestros...</td></tr>
             </tbody>
           </table>
+        </div>
+        <!-- Paginación Siniestros -->
+        <div class="d-flex justify-content-between align-items-center mt-3" id="claims-pagination-wrap">
+          <span class="text-muted small" id="claims-pagination-info"></span>
+          <nav><ul class="pagination pagination-sm mb-0" id="claims-pagination"></ul></nav>
         </div>
       </section>
 
@@ -893,6 +918,107 @@
                 <canvas id="chartProduccionCompania"></canvas>
               </div>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==========================================
+           9. USUARIOS, AUDITORÍA Y SISTEMA (ADMIN)
+           ========================================== -->
+      <section id="panel-usuarios" class="panel-section d-none">
+        <div class="row g-4 mb-4">
+          <!-- Tarjeta de Gestión de Usuarios -->
+          <div class="col-lg-8">
+            <div class="app-card h-100">
+              <div class="app-card-title d-flex justify-content-between align-items-center">
+                <span><i class="fa-solid fa-users-gear text-primary me-2"></i>Cuentas de Usuario y Permisos</span>
+                <button class="btn btn-sm btn-premium" id="btn-new-user">
+                  <i class="fa-solid fa-user-plus me-1"></i> Nuevo Usuario
+                </button>
+              </div>
+              <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                  <thead>
+                    <tr>
+                      <th>Nombre</th>
+                      <th>Usuario / Email</th>
+                      <th>Rol</th>
+                      <th>Estado</th>
+                      <th>Último Acceso</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody id="users-table-body">
+                    <tr><td colspan="6" class="text-center py-4 text-muted">Cargando usuarios...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tarjeta de Mantenimiento Diario Automático -->
+          <div class="col-lg-4">
+            <div class="app-card h-100">
+              <div class="app-card-title">
+                <span><i class="fa-solid fa-gears text-info me-2"></i>Mantenimiento Diario</span>
+              </div>
+              <p class="text-muted small mb-3">
+                El sistema sincroniza automáticamente cada 6 horas y al iniciar las pólizas cuya vigencia expiró (pasándolas a <code>vencida</code>) y las cuotas impagas vencidas (pasándolas a <code>en_mora</code>).
+              </p>
+              <div class="p-3 bg-light rounded-3 border mb-3 small" id="maintenance-status-box">
+                <div class="text-muted">Estado del motor: <strong class="text-success">Activo (Automático)</strong></div>
+                <div class="mt-1" id="maintenance-last-result">Puede forzar una sincronización inmediata cuando lo necesite.</div>
+              </div>
+              <button class="btn btn-outline-primary w-100" id="btn-run-maintenance">
+                <i class="fa-solid fa-rotate me-1"></i> Sincronizar Estados Ahora
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bitácora de Auditoría -->
+        <div class="app-card">
+          <div class="app-card-title d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <span><i class="fa-solid fa-shield-halved text-secondary me-2"></i>Bitácora de Auditoría Inmutable (Append-Only)</span>
+            <div class="d-flex gap-2">
+              <select class="form-select form-select-sm" id="filter-audit-table" style="width: 160px;">
+                <option value="">Todas las tablas</option>
+                <option value="usuarios">usuarios</option>
+                <option value="clientes">clientes</option>
+                <option value="polizas">polizas</option>
+                <option value="cuotas_cobranza">cuotas_cobranza</option>
+                <option value="cotizaciones">cotizaciones</option>
+                <option value="siniestros">siniestros</option>
+                <option value="comisiones">comisiones</option>
+              </select>
+              <select class="form-select form-select-sm" id="filter-audit-action" style="width: 140px;">
+                <option value="">Toda acción</option>
+                <option value="INSERT">INSERT</option>
+                <option value="UPDATE">UPDATE</option>
+                <option value="DELETE">DELETE</option>
+              </select>
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm table-hover align-middle mb-0" style="font-size: 0.85rem;">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Fecha / Hora</th>
+                  <th>Usuario</th>
+                  <th>Acción</th>
+                  <th>Tabla (ID)</th>
+                  <th>Campos Modificados</th>
+                </tr>
+              </thead>
+              <tbody id="audit-table-body">
+                <tr><td colspan="6" class="text-center py-3 text-muted">Cargando eventos de auditoría...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="d-flex justify-content-between align-items-center mt-3" id="audit-pagination-wrap">
+            <span class="text-muted small" id="audit-pagination-info"></span>
+            <nav><ul class="pagination pagination-sm mb-0" id="audit-pagination"></ul></nav>
           </div>
         </div>
       </section>
@@ -1879,6 +2005,57 @@
     </div>
   </div>
 
+  <!-- MODAL GESTIÓN DE USUARIO (ADMIN) -->
+  <div class="modal fade" id="modalUsuario" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="modalUsuarioTitle">Nuevo Usuario</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <form id="formUsuario">
+            <input type="hidden" id="user-id-input">
+            <div class="mb-3">
+              <label for="user-nombre-input" class="form-label">Nombre y Apellido *</label>
+              <input type="text" class="form-control" id="user-nombre-input" required placeholder="Ej: Juan Pérez">
+            </div>
+            <div class="mb-3">
+              <label for="user-usuario-input" class="form-label">Usuario o Email (Login) *</label>
+              <input type="text" class="form-control" id="user-usuario-input" required placeholder="Ej: jperez o juan@gpgseguros.com">
+            </div>
+            <div class="row g-3 mb-3">
+              <div class="col-md-6">
+                <label for="user-rol-input" class="form-label">Rol en el Sistema *</label>
+                <select class="form-select" id="user-rol-input" required>
+                  <option value="productor">Productor</option>
+                  <option value="administrativo">Administrativo</option>
+                  <option value="admin">Administrador</option>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label for="user-activo-input" class="form-label">Estado</label>
+                <select class="form-select" id="user-activo-input">
+                  <option value="true" selected>Activo</option>
+                  <option value="false">Inactivo (Baja)</option>
+                </select>
+              </div>
+            </div>
+            <div class="mb-2">
+              <label for="user-password-input" class="form-label" id="user-password-label">Contraseña *</label>
+              <input type="password" class="form-control" id="user-password-input" placeholder="Mínimo 6 caracteres">
+              <div class="form-text small text-muted" id="user-password-help">Mínimo 6 caracteres.</div>
+            </div>
+            <div class="modal-footer px-0 pb-0 mt-4">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+              <button type="submit" class="btn btn-premium">Guardar Usuario</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Chart.js CDN -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <!-- Bootstrap Bundle JS -->
@@ -1897,6 +2074,7 @@
   <script src="/js/reportes.js"></script>    <!-- Reportes PDF/Excel -->
   <script src="/js/smartParser.js"></script> <!-- Carga Inteligente PDF -->
   <script src="/js/globalSearch.js"></script><!-- Spotlight Ctrl+K -->
+  <script src="/js/usuarios.js"></script>    <!-- Administración de Usuarios y Auditoría -->
   <script src="/js/router.js"></script>      <!-- SPA Router + init (debe ir último) -->
 </body>
 </html>

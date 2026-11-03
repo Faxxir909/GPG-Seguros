@@ -97,15 +97,38 @@ async function withTransaction(callback, context = {}) {
   }
 }
 
-async function updateExpiredPolicies() {
+async function runDailyMaintenance() {
+  let expiredPoliciesUpdated = 0;
+  let overdueInstallmentsUpdated = 0;
   try {
-    const result = await run("UPDATE polizas SET estado = 'vencida' WHERE estado = 'vigente' AND fecha_vencimiento < CURRENT_DATE");
-    if (result && result.changes > 0) {
-      console.log(`[DB Maintenance]: Se actualizaron ${result.changes} pólizas vencidas a estado 'vencida'.`);
+    const polResult = await run("UPDATE polizas SET estado = 'vencida' WHERE estado = 'vigente' AND fecha_vencimiento < CURRENT_DATE");
+    expiredPoliciesUpdated = polResult?.changes || 0;
+    if (expiredPoliciesUpdated > 0) {
+      console.log(`[DB Maintenance]: Se actualizaron ${expiredPoliciesUpdated} pólizas vencidas a estado 'vencida'.`);
     }
   } catch (err) {
     console.error('[DB Maintenance Warning]: Error al actualizar pólizas vencidas:', err.message);
   }
+
+  try {
+    const cuotasResult = await run("UPDATE cuotas_cobranza SET estado = 'en_mora' WHERE estado = 'pendiente' AND fecha_vencimiento < CURRENT_DATE");
+    overdueInstallmentsUpdated = cuotasResult?.changes || 0;
+    if (overdueInstallmentsUpdated > 0) {
+      console.log(`[DB Maintenance]: Se actualizaron ${overdueInstallmentsUpdated} cuotas vencidas a estado 'en_mora'.`);
+    }
+  } catch (err) {
+    console.error('[DB Maintenance Warning]: Error al actualizar cuotas en mora:', err.message);
+  }
+
+  return {
+    expiredPoliciesUpdated,
+    overdueInstallmentsUpdated,
+    executedAt: new Date().toISOString()
+  };
+}
+
+async function updateExpiredPolicies() {
+  return runDailyMaintenance();
 }
 
 async function initDatabase() {
@@ -321,6 +344,7 @@ module.exports = {
   initDatabase,
   withTransaction,
   updateExpiredPolicies,
+  runDailyMaintenance,
   healthCheck,
   close,
   convertPlaceholders

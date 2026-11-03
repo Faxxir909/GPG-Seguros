@@ -14,6 +14,7 @@ const commissionController = require('../controllers/commissionController');
 const uploadController = require('../controllers/uploadController');
 const searchController = require('../controllers/searchController');
 const paymentController = require('../controllers/paymentController');
+const userController = require('../controllers/userController');
 
 // 1. AUTENTICACIÓN
 router.post('/auth/login', authController.login);
@@ -104,6 +105,14 @@ router.get('/payments/summary', checkRole(['admin', 'productor', 'administrativo
 // 14. REPORTES (PDF Y EXCEL)
 router.get('/reports/excel', checkRole(['admin', 'productor']), reportController.exportExcel);
 router.get('/reports/pdf', checkRole(['admin', 'productor']), reportController.exportPdf);
+
+// 15. ADMINISTRACIÓN DE USUARIOS, AUDITORÍA Y MANTENIMIENTO (SOLO ADMIN)
+router.get('/users', checkRole(['admin']), userController.getUsers);
+router.post('/users', checkRole(['admin']), userController.createUser);
+router.put('/users/:id', checkRole(['admin']), userController.updateUser);
+router.delete('/users/:id', checkRole(['admin']), userController.deleteUser);
+router.get('/audit-logs', checkRole(['admin']), userController.getAuditLogs);
+router.post('/admin/maintenance/run', checkRole(['admin']), userController.runMaintenance);
 
 module.exports = router;
 

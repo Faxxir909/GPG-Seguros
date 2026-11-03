@@ -3,14 +3,52 @@ const { getCommissionRate } = require('../services/commissionService');
 const { ensurePolicyInstallments } = require('./paymentController');
 
 async function getQuotes(req, res, next) {
+  const { page, limit, search, estado } = req.query || {};
   try {
-    const quotes = await db.all(`
+    let sql = `
       SELECT q.*, c.nombre as cliente_nombre, v.marca, v.modelo, v.patente
       FROM cotizaciones q
       JOIN clientes c ON q.cliente_id = c.id
       LEFT JOIN vehiculos v ON q.vehiculo_id = v.id
-      ORDER BY q.fecha_creacion DESC
-    `);
+      WHERE 1=1
+    `;
+    const params = [];
+
+    if (search) {
+      sql += ` AND (c.nombre ILIKE ? OR q.compania ILIKE ? OR q.cobertura ILIKE ? OR v.patente ILIKE ?)`;
+      const s = `%${search}%`;
+      params.push(s, s, s, s);
+    }
+    if (estado) {
+      sql += ` AND q.estado = ?`;
+      params.push(estado);
+    }
+
+    sql += ` ORDER BY q.fecha_creacion DESC, q.id DESC`;
+
+    if (limit) {
+      const parsedLimit = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 15));
+      const parsedPage = Math.max(1, Number.parseInt(page, 10) || 1);
+      const offset = (parsedPage - 1) * parsedLimit;
+
+      const countSql = `SELECT COUNT(*) as count FROM (${sql}) as count_q`;
+      const countRes = await db.get(countSql, params);
+      const total = Number.parseInt(countRes?.count || 0, 10);
+
+      sql += ` LIMIT ? OFFSET ?`;
+      params.push(parsedLimit, offset);
+
+      const quotes = await db.all(sql, params);
+      return res.json({
+        data: quotes,
+        total,
+        page: parsedPage,
+        limit: parsedLimit,
+        totalPages: Math.ceil(total / parsedLimit) || 1
+      });
+    }
+
+    const quotes = await db.all(sql, params);
     res.json(quotes);
   } catch (err) {
     next(err);
